@@ -22,6 +22,7 @@ import io.unitycatalog.server.exception.BaseException;
 import io.unitycatalog.server.exception.ErrorCode;
 import io.unitycatalog.server.exception.ExceptionHandlingDecorator;
 import io.unitycatalog.server.exception.GlobalExceptionHandler;
+import io.unitycatalog.server.persist.MetastoreRepository;
 import io.unitycatalog.server.security.SecurityConfiguration;
 import io.unitycatalog.server.security.SecurityContext;
 import io.unitycatalog.server.service.*;
@@ -116,6 +117,7 @@ public class UnityCatalogServer {
     StagingTableService stagingTableService = new StagingTableService();
     FunctionService functionService = new FunctionService(authorizer);
     ModelService modelService = new ModelService(authorizer);
+    MetastoreService metastoreService = new MetastoreService();
     // TODO: combine these into a single service in a follow-up PR
     TemporaryTableCredentialsService temporaryTableCredentialsService =
         new TemporaryTableCredentialsService(authorizer, credentialOperations);
@@ -140,6 +142,7 @@ public class UnityCatalogServer {
         .annotatedService(basePath + "staging-tables", stagingTableService, unityConverterFunction)
         .annotatedService(basePath + "functions", functionService, unityConverterFunction)
         .annotatedService(basePath + "models", modelService, unityConverterFunction)
+        .annotatedService(basePath, metastoreService, unityConverterFunction)
         .annotatedService(
             basePath + "temporary-table-credentials", temporaryTableCredentialsService)
         .annotatedService(
@@ -176,7 +179,7 @@ public class UnityCatalogServer {
           .exclude(controlPath + "auth/tokens")
           .build(accessDecorator);
 
-      AuthDecorator authDecorator = new AuthDecorator();
+      AuthDecorator authDecorator = new AuthDecorator(securityContext);
       sb.routeDecorator().pathPrefix(basePath).build(authDecorator);
       sb.routeDecorator()
           .pathPrefix(controlPath)
@@ -205,6 +208,7 @@ public class UnityCatalogServer {
 
   public void start() {
     LOGGER.info("Starting server...");
+    MetastoreRepository.getInstance().initMetastoreIfNeeded();
     server.start().join();
   }
 
