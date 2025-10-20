@@ -1,8 +1,11 @@
 package io.unitycatalog.server.base;
 
 import io.unitycatalog.server.UnityCatalogServer;
-import io.unitycatalog.server.persist.utils.HibernateUtils;
+import io.unitycatalog.server.persist.utils.HibernateConfigurator;
+import io.unitycatalog.server.service.credential.CloudCredentialVendor;
+import io.unitycatalog.server.utils.ServerProperties;
 import io.unitycatalog.server.utils.TestUtils;
+import java.util.Properties;
 import org.hibernate.Session;
 import org.hibernate.SessionFactory;
 import org.hibernate.Transaction;
@@ -13,6 +16,17 @@ public abstract class BaseServerTest {
 
   public static ServerConfig serverConfig = new ServerConfig("http://localhost", "");
   protected static UnityCatalogServer unityCatalogServer;
+  protected static Properties serverProperties;
+  protected static HibernateConfigurator hibernateConfigurator;
+  protected static CloudCredentialVendor cloudCredentialVendor;
+
+  protected void setUpProperties() {
+    serverProperties = new Properties();
+    serverProperties.setProperty("server.env", "test");
+    serverProperties.setProperty("storageRoot", "/tmp");
+  }
+
+  protected void setUpCredentialOperations() {}
 
   @BeforeEach
   public void setUp() {
@@ -29,9 +43,16 @@ public abstract class BaseServerTest {
       System.out.println("Running tests on localhost..");
       // start the server on a random port
       int port = TestUtils.getRandomPort();
-      System.setProperty("server.env", "test");
-      System.setProperty("storageRoot", "/tmp");
-      unityCatalogServer = new UnityCatalogServer(port);
+      setUpProperties();
+      ServerProperties initServerProperties = new ServerProperties(serverProperties);
+      setUpCredentialOperations();
+      hibernateConfigurator = new HibernateConfigurator(initServerProperties);
+      unityCatalogServer =
+          UnityCatalogServer.builder()
+              .port(port)
+              .serverProperties(initServerProperties)
+              .credentialOperations(cloudCredentialVendor)
+              .build();
       unityCatalogServer.start();
       serverConfig.setServerUrl("http://localhost:" + port);
     }
@@ -42,7 +63,7 @@ public abstract class BaseServerTest {
     if (unityCatalogServer != null) {
 
       // TODO: Figure out a better way to clear the database
-      SessionFactory sessionFactory = HibernateUtils.getSessionFactory();
+      SessionFactory sessionFactory = hibernateConfigurator.getSessionFactory();
       Session session = sessionFactory.openSession();
       Transaction tx = session.beginTransaction();
       session.createMutationQuery("delete from FunctionParameterInfoDAO").executeUpdate();

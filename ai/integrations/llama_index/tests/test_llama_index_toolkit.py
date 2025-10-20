@@ -13,13 +13,14 @@ from databricks.sdk.service.catalog import (
 )
 from pydantic import BaseModel, ValidationError
 
-from unitycatalog.ai.core.client import (
+from unitycatalog.ai.core.base import (
     BaseFunctionClient,
     FunctionExecutionResult,
 )
+from unitycatalog.ai.core.utils.execution_utils import ExecutionModeDatabricks
 from unitycatalog.ai.llama_index.toolkit import UCFunctionToolkit, extract_properties
 from unitycatalog.ai.test_utils.client_utils import (
-    USE_SERVERLESS,
+    TEST_IN_DATABRICKS,
     client,  # noqa: F401
     get_client,
     requires_databricks,
@@ -27,6 +28,10 @@ from unitycatalog.ai.test_utils.client_utils import (
 )
 from unitycatalog.ai.test_utils.function_utils import (
     CATALOG,
+    RETRIEVER_OUTPUT_CSV,
+    RETRIEVER_OUTPUT_SCALAR,
+    RETRIEVER_TABLE_FULL_DATA_TYPE,
+    RETRIEVER_TABLE_RETURN_PARAMS,
     create_function_and_cleanup,
     create_python_function_and_cleanup,
 )
@@ -123,11 +128,11 @@ def test_toolkit_creation_with_properties_argument_mocked():
             UCFunctionToolkit(function_names=["catalog.schema.test_function"], client=mock_client)
 
 
+@pytest.mark.parametrize("execution_mode", ["serverless", "local"])
 @requires_databricks
-@pytest.mark.parametrize("use_serverless", [True, False])
-def test_toolkit_e2e(use_serverless, monkeypatch):
-    monkeypatch.setenv(USE_SERVERLESS, str(use_serverless))
+def test_toolkit_e2e(execution_mode):
     client = get_client()
+    client.execution_mode = ExecutionModeDatabricks(execution_mode)
     with set_default_client(client), create_function_and_cleanup(client, schema=SCHEMA) as func_obj:
         toolkit = UCFunctionToolkit(
             function_names=[func_obj.full_function_name], return_direct=True
@@ -141,20 +146,21 @@ def test_toolkit_e2e(use_serverless, monkeypatch):
         assert tool.uc_function_name == func_obj.full_function_name
         assert tool.client_config == client.to_dict()
 
-        input_args = {"code": "print(1)"}
-        result = json.loads(tool.fn(**input_args))["value"]
-        assert result == "1\n"
+        input_args = {"number": 1}
+        raw_result = tool.fn(**input_args)
+        result = json.loads(raw_result)["value"]
+        assert result == "11"
 
         toolkit = UCFunctionToolkit(function_names=[f"{CATALOG}.{SCHEMA}.*"])
         assert len(toolkit.tools) >= 1
         assert func_obj.tool_name in [t.metadata.name for t in toolkit.tools]
 
 
+@pytest.mark.parametrize("execution_mode", ["serverless", "local"])
 @requires_databricks
-@pytest.mark.parametrize("use_serverless", [True, False])
-def test_toolkit_e2e_manually_passing_client(use_serverless, monkeypatch):
-    monkeypatch.setenv(USE_SERVERLESS, str(use_serverless))
+def test_toolkit_e2e_manually_passing_client(execution_mode):
     client = get_client()
+    client.execution_mode = ExecutionModeDatabricks(execution_mode)
     with set_default_client(client), create_function_and_cleanup(client, schema=SCHEMA) as func_obj:
         toolkit = UCFunctionToolkit(
             function_names=[func_obj.full_function_name], client=client, return_direct=True
@@ -167,35 +173,35 @@ def test_toolkit_e2e_manually_passing_client(use_serverless, monkeypatch):
         assert tool.metadata.description == func_obj.comment
         assert tool.uc_function_name == func_obj.full_function_name
         assert tool.client_config == client.to_dict()
-        input_args = {"code": "print(1)"}
-        result = json.loads(tool.fn(**input_args))["value"]
-        assert result == "1\n"
+        input_args = {"number": 2}
+        raw_result = tool.fn(**input_args)
+        result = json.loads(raw_result)["value"]
+        assert result == "12"
 
         toolkit = UCFunctionToolkit(function_names=[f"{CATALOG}.{SCHEMA}.*"], client=client)
         assert len(toolkit.tools) >= 1
         assert func_obj.tool_name in [t.metadata.name for t in toolkit.tools]
 
 
+@pytest.mark.parametrize("execution_mode", ["serverless", "local"])
 @requires_databricks
-@pytest.mark.parametrize("use_serverless", [True, False])
-def test_multiple_toolkits(use_serverless, monkeypatch):
-    monkeypatch.setenv(USE_SERVERLESS, str(use_serverless))
+def test_multiple_toolkits(execution_mode):
     client = get_client()
+    client.execution_mode = ExecutionModeDatabricks(execution_mode)
     with set_default_client(client), create_function_and_cleanup(client, schema=SCHEMA) as func_obj:
         toolkit1 = UCFunctionToolkit(function_names=[func_obj.full_function_name])
         toolkit2 = UCFunctionToolkit(function_names=[f"{CATALOG}.{SCHEMA}.*"])
         tool1 = toolkit1.tools[0]
         tool2 = [t for t in toolkit2.tools if t.metadata.name == func_obj.tool_name][0]
-        input_args = {"code": "print(1)"}
-        result1 = json.loads(tool1.fn(**input_args))["value"]
-        result2 = json.loads(tool2.fn(**input_args))["value"]
+        input_args = {"number": 5}
+        raw_result1 = tool1.fn(**input_args)
+        raw_result2 = tool2.fn(**input_args)
+        result1 = json.loads(raw_result1)["value"]
+        result2 = json.loads(raw_result2)["value"]
         assert result1 == result2
 
 
 def test_toolkit_creation_errors():
-    with pytest.raises(ValidationError, match=r"No client provided"):
-        UCFunctionToolkit(function_names=[])
-
     with pytest.raises(ValidationError, match=r"Input should be an instance of BaseFunctionClient"):
         UCFunctionToolkit(function_names=[], client="client")
 
@@ -208,7 +214,14 @@ def test_toolkit_function_argument_errors(client):
         UCFunctionToolkit(client=client)
 
 
-def generate_function_info():
+def generate_function_info(
+    catalog: str = "catalog",
+    schema: str = "schema",
+    name: str = "test_function",
+    data_type: ColumnTypeName = None,
+    full_data_type: str = None,
+    return_params: FunctionParameterInfos = None,
+):
     parameters = [
         {
             "name": "x",
@@ -223,9 +236,13 @@ def generate_function_info():
         }
     ]
     return FunctionInfo(
-        catalog_name="catalog",
-        schema_name="schema",
-        name="test",
+        catalog_name=catalog,
+        schema_name=schema,
+        name=name,
+        full_name=f"{catalog}.{schema}.{name}",
+        data_type=data_type,
+        full_data_type=full_data_type,
+        return_params=return_params,
         input_params=FunctionParameterInfos(
             parameters=[FunctionParameterInfo(**param) for param in parameters]
         ),
@@ -259,6 +276,44 @@ def test_uc_function_to_llama_tool(client):
         assert result == "some_string"
 
 
+@pytest.mark.parametrize(
+    "filter_accessible_functions",
+    [True, False],
+)
+def uc_function_to_llama_tool_permission_denied(filter_accessible_functions):
+    client = get_client()
+    # Permission Error should be caught
+    with mock.patch(
+        "unitycatalog.ai.core.databricks.DatabricksFunctionClient.get_function",
+        side_effect=PermissionError("Permission Denied to Underlying Assets"),
+    ):
+        if filter_accessible_functions:
+            tool = UCFunctionToolkit.uc_function_to_llama_tool(
+                client=client,
+                function_name=f"{CATALOG}.{SCHEMA}.test",
+                filter_accessible_functions=filter_accessible_functions,
+            )
+            assert tool == None
+        else:
+            with pytest.raises(PermissionError):
+                tool = UCFunctionToolkit.uc_function_to_llama_tool(
+                    client=client,
+                    function_name=f"{CATALOG}.{SCHEMA}.test",
+                    filter_accessible_functions=filter_accessible_functions,
+                )
+    # Other errors should not be Caught
+    with mock.patch(
+        "unitycatalog.ai.core.databricks.DatabricksFunctionClient.get_function",
+        side_effect=ValueError("Wrong Get Function Call"),
+    ):
+        with pytest.raises(ValueError):
+            tool = UCFunctionToolkit.uc_function_to_llama_tool(
+                client=client,
+                function_name=f"{CATALOG}.{SCHEMA}.test",
+                filter_accessible_functions=filter_accessible_functions,
+            )
+
+
 def test_toolkit_with_invalid_function_input(client):
     """Test toolkit with invalid input parameters for function conversion."""
     mock_function_info = generate_function_info()
@@ -278,6 +333,70 @@ def test_toolkit_with_invalid_function_input(client):
 
         with pytest.raises(ValueError, match="Extra parameters provided that are not defined"):
             tool.fn(**invalid_inputs)
+
+
+@pytest.mark.parametrize(
+    "format,function_output",
+    [
+        ("SCALAR", RETRIEVER_OUTPUT_SCALAR),
+        ("CSV", RETRIEVER_OUTPUT_CSV),
+    ],
+)
+@pytest.mark.parametrize(
+    "data_type,full_data_type,return_params",
+    [
+        (ColumnTypeName.TABLE_TYPE, RETRIEVER_TABLE_FULL_DATA_TYPE, RETRIEVER_TABLE_RETURN_PARAMS),
+    ],
+)
+def test_toolkit_with_tracing_as_retriever(
+    format, function_output, data_type, full_data_type, return_params
+):
+    client = get_client()
+    mock_function_info = generate_function_info(
+        name=f"test_{format}",
+        data_type=data_type,
+        full_data_type=full_data_type,
+        return_params=return_params,
+    )
+
+    with (
+        mock.patch(
+            "unitycatalog.ai.core.databricks.DatabricksFunctionClient.get_function",
+            return_value=mock_function_info,
+        ),
+        mock.patch(
+            "unitycatalog.ai.core.databricks.DatabricksFunctionClient._execute_uc_function",
+            return_value=FunctionExecutionResult(format=format, value=function_output),
+        ),
+        mock.patch(
+            "unitycatalog.ai.core.databricks.DatabricksFunctionClient.validate_input_params"
+        ),
+    ):
+        import mlflow
+
+        if TEST_IN_DATABRICKS:
+            import mlflow.tracking._model_registry.utils
+
+            mlflow.tracking._model_registry.utils._get_registry_uri_from_spark_session = (
+                lambda: "databricks-uc"
+            )
+
+        mlflow.llama_index.autolog()
+
+        tool = UCFunctionToolkit.uc_function_to_llama_tool(
+            function_name=mock_function_info.full_name, client=client, return_direct=True
+        )
+        result = tool.fn(x="some input")
+        assert json.loads(result)["value"] == function_output
+
+        trace = mlflow.get_trace(mlflow.get_last_active_trace_id())
+        assert trace is not None
+        assert trace.data.spans[0].name == mock_function_info.full_name
+        assert trace.info.execution_time_ms is not None
+        assert trace.data.request == '{"x": "some input"}'
+        assert trace.data.response == RETRIEVER_OUTPUT_SCALAR
+
+        mlflow.llama_index.autolog(disable=True)
 
 
 def test_extract_properties_success():
@@ -333,7 +452,7 @@ def test_extract_properties_key_collisions(properties, expected_keys):
     pattern = (
         re.escape("Key collision detected for keys: ")
         + ".*".join(re.escape(key) for key in expected_keys_set)
-        + r".*Cannot merge 'properties'."
+        + r".*Cannot merge \'properties\'."
     )
 
     with pytest.raises(KeyError, match=pattern):
@@ -465,7 +584,9 @@ def test_uc_function_to_llama_tool_mocked():
         mock_client.get_function.assert_called_once_with("catalog.schema.test_function")
         mock_client.to_dict.assert_called_once()
         mock_client.execute_function.assert_called_once_with(
-            function_name="catalog.schema.test_function", parameters=input_args
+            function_name="catalog.schema.test_function",
+            parameters=input_args,
+            enable_retriever_tracing=False,
         )
 
 
@@ -503,5 +624,7 @@ def test_toolkit_with_invalid_function_input_mocked():
         mock_client.get_function.assert_called_once_with("catalog.schema.test_function")
         mock_client.to_dict.assert_called_once()
         mock_client.execute_function.assert_called_once_with(
-            function_name="catalog.schema.test_function", parameters=invalid_inputs
+            function_name="catalog.schema.test_function",
+            parameters=invalid_inputs,
+            enable_retriever_tracing=False,
         )

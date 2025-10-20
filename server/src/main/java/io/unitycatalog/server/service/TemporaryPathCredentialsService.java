@@ -13,7 +13,7 @@ import io.unitycatalog.server.exception.ErrorCode;
 import io.unitycatalog.server.exception.GlobalExceptionHandler;
 import io.unitycatalog.server.model.*;
 import io.unitycatalog.server.service.credential.CredentialContext;
-import io.unitycatalog.server.service.credential.CredentialOperations;
+import io.unitycatalog.server.service.credential.CloudCredentialVendor;
 import io.unitycatalog.server.utils.IdentityUtils;
 import lombok.SneakyThrows;
 
@@ -28,12 +28,11 @@ import static io.unitycatalog.server.service.credential.CredentialContext.Privil
 
 @ExceptionHandler(GlobalExceptionHandler.class)
 public class TemporaryPathCredentialsService {
-    private final CredentialOperations credentialOps;
+    private final CloudCredentialVendor cloudCredentialVendor;
     private final UnityAccessEvaluator evaluator;
 
-    @SneakyThrows
-    public TemporaryPathCredentialsService(UnityCatalogAuthorizer authorizer, CredentialOperations credentialOps) {
-        this.credentialOps = credentialOps;
+    public TemporaryPathCredentialsService(CloudCredentialVendor cloudCredentialVendor) {
+        this.cloudCredentialVendor = cloudCredentialVendor;
         this.evaluator = new UnityAccessEvaluator(authorizer);
     }
 
@@ -43,7 +42,7 @@ public class TemporaryPathCredentialsService {
     public HttpResponse generateTemporaryPathCredential(
         GenerateTemporaryPathCredential generateTemporaryPathCredential) {
         return HttpResponse.ofJson(
-                credentialOps.vendCredential(
+                cloudCredentialVendor.vendCredential(
                         generateTemporaryPathCredential.getUrl(),
                         pathOperationToPrivileges(generateTemporaryPathCredential.getOperation())));
     }

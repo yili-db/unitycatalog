@@ -1,7 +1,8 @@
 import java.nio.file.Files
 import java.io.File
 import Tarball.createTarballSettings
-import sbt.util
+import sbt.{Attributed, util}
+import sbt.Keys.*
 import sbtlicensereport.license.{DepModuleInfo, LicenseCategory, LicenseInfo}
 import ReleaseSettings.*
 
@@ -16,11 +17,16 @@ val artifactNamePrefix = "unitycatalog"
 lazy val javacRelease11 = Seq("--release", "11")
 lazy val javacRelease17 = Seq("--release", "17")
 
-lazy val scala212 = "2.12.15"
-lazy val scala213 = "2.13.14"
+lazy val scala213 = "2.13.16"
 
-lazy val deltaVersion = "3.2.1"
-lazy val sparkVersion = "3.5.3"
+lazy val deltaVersion = "4.0.0"
+lazy val sparkVersion = "4.0.0"
+
+// Library versions
+lazy val jacksonVersion = "2.17.0"
+lazy val openApiToolsJacksonBindNullableVersion = "0.2.6"
+lazy val log4jVersion = "2.24.3"
+val orgApacheHttpVersion = "4.5.14"
 
 lazy val commonSettings = Seq(
   organization := orgName,
@@ -43,8 +49,11 @@ lazy val commonSettings = Seq(
   libraryDependencies ++= Seq(
     "org.slf4j" % "slf4j-api" % "2.0.13",
     "org.slf4j" % "slf4j-log4j12" % "2.0.13" % Test,
-    "org.apache.logging.log4j" % "log4j-slf4j2-impl" % "2.23.1",
-    "org.apache.logging.log4j" % "log4j-api" % "2.23.1"
+    "org.apache.logging.log4j" % "log4j-slf4j2-impl" % log4jVersion,
+    "org.apache.logging.log4j" % "log4j-api" % log4jVersion
+  ),
+  excludeDependencies ++= Seq(
+    ExclusionRule("org.slf4j", "slf4j-reload4j")
   ),
   resolvers += Resolver.mavenLocal,
   autoScalaLibrary := false,
@@ -65,7 +74,10 @@ lazy val commonSettings = Seq(
     val packageFile = (Compile / packageBin).value
     generateClasspathFile(
       targetDir = packageFile.getParentFile,
-      classpath = (Runtime / dependencyClasspath).value)
+      // Also include the jar being built (packageFile) in the classpath
+      // This is specifically required by the server project since the server and control models are provided dependencies
+      classpath = (Runtime / dependencyClasspath).value :+ Attributed.blank(packageFile)
+    )
     packageFile
   },
 
@@ -130,6 +142,8 @@ lazy val controlApi = (project in file("target/control/java"))
       "com.fasterxml.jackson.core" % "jackson-annotations" % jacksonVersion,
       "com.fasterxml.jackson.core" % "jackson-databind" % jacksonVersion,
       "com.fasterxml.jackson.datatype" % "jackson-datatype-jsr310" % jacksonVersion,
+      "org.apache.httpcomponents" % "httpclient" % orgApacheHttpVersion,
+      "org.apache.httpcomponents" % "httpmime" % orgApacheHttpVersion,
     ),
     (Compile / compile) := ((Compile / compile) dependsOn generate).value,
 
@@ -223,30 +237,44 @@ lazy val client = (project in file("target/clients/java"))
     }
   )
 
-lazy val pythonClient = (project in file("clients/python/target"))
+lazy val prepareGeneration = taskKey[Unit]("Prepare the environment for OpenAPI code generation")
+
+lazy val pythonClient = (project in file("clients/python"))
   .enablePlugins(OpenApiGeneratorPlugin)
   .settings(
-    // name of the generation step. See `openApiPackageName` for the actual Python package name
     name := s"$artifactNamePrefix-python-client",
     commonSettings,
-    (Compile / compile) := ((Compile / compile) dependsOn generate).value,
-
-    // OpenAPI generation specs
-    openApiInputSpec := (file(".") / "api" / "all.yaml").toString,
+    skipReleaseSettings,
+    Compile / compile := (Compile / compile).dependsOn(generate).value,
+    openApiInputSpec := (baseDirectory.value.getParentFile.getParentFile / "api" / "all.yaml").getAbsolutePath,
     openApiGeneratorName := "python",
-    openApiOutputDir := (file("clients") / "python" / "target").toString,
-    openApiPackageName := s"$artifactNamePrefix",
+    openApiOutputDir := (baseDirectory.value / "target").getAbsolutePath,
+    openApiPackageName := s"$artifactNamePrefix.client",
     openApiAdditionalProperties := Map(
       "packageVersion" -> s"${version.value.replace("-SNAPSHOT", ".dev0")}",
+      "library"        -> "asyncio"
     ),
     openApiGenerateApiTests := SettingDisabled,
     openApiGenerateModelTests := SettingDisabled,
     openApiGenerateApiDocumentation := SettingDisabled,
     openApiGenerateModelDocumentation := SettingDisabled,
-    // Define the simple generate command to generate full client codes
-    generate := {
-      val _ = openApiGenerate.value
-    }
+
+    prepareGeneration := PythonClientPostBuild.prepareGeneration(streams.value.log, baseDirectory.value, openApiOutputDir.value),
+
+    generate := Def.sequential(
+      prepareGeneration,
+      openApiGenerate,
+      Def.task {
+        val log = streams.value.log
+
+        PythonClientPostBuild.processGeneratedFiles(
+          log,
+          openApiOutputDir.value,
+          baseDirectory.value,
+        )
+        log.info("OpenAPI Python client generation completed.")
+      }
+    ).value
   )
 
 lazy val apiDocs = (project in file("api"))
@@ -269,7 +297,9 @@ lazy val populateTestDB = taskKey[Unit]("Run PopulateTestDatabase main class fro
 
 lazy val server = (project in file("server"))
   .dependsOn(client % "test->test")
-  .dependsOn(serverModels)
+  // Server and control models are added as provided to avoid them being added as maven dependencies
+  // This is because the server and control models are included in the server jar
+  .dependsOn(serverModels % "provided", controlModels % "provided")
   .settings (
     name := s"$artifactNamePrefix-server",
     mainClass := Some(orgName + ".server.UnityCatalogServer"),
@@ -319,10 +349,10 @@ lazy val server = (project in file("server"))
       "org.apache.httpcomponents" % "httpclient" % "4.5.14",
 
       // Iceberg REST Catalog dependencies
-      "org.apache.iceberg" % "iceberg-core" % "1.5.2",
-      "org.apache.iceberg" % "iceberg-aws" % "1.5.2",
-      "org.apache.iceberg" % "iceberg-azure" % "1.5.2",
-      "org.apache.iceberg" % "iceberg-gcp" % "1.5.2",
+      "org.apache.iceberg" % "iceberg-core" % "1.9.2",
+      "org.apache.iceberg" % "iceberg-aws" % "1.9.2",
+      "org.apache.iceberg" % "iceberg-azure" % "1.9.2",
+      "org.apache.iceberg" % "iceberg-gcp" % "1.9.2",
       "software.amazon.awssdk" % "s3" % "2.24.0",
       "software.amazon.awssdk" % "sts" % "2.24.0",
       "io.vertx" % "vertx-core" % "4.3.5",
@@ -369,13 +399,17 @@ lazy val server = (project in file("server"))
       val log = streams.value.log
       (Test / runMain).toTask(s" io.unitycatalog.server.utils.PopulateTestDatabase").value
     },
-    Test / javaOptions += s"-Duser.dir=${(ThisBuild / baseDirectory).value.getAbsolutePath}"
+    Test / javaOptions += s"-Duser.dir=${(ThisBuild / baseDirectory).value.getAbsolutePath}",
+    // Include server and control models in the bin package for server
+    // This will allow us to have a single maven artifact and not 3 (server, server models, control models)
+    Compile / packageBin / mappings ++= (Compile / packageBin / mappings).value ++
+      (serverModels / Compile / packageBin / mappings).value ++
+      (controlModels / Compile / packageBin / mappings).value
   )
 
 lazy val serverModels = (project in file("server") / "target" / "models")
   .enablePlugins(OpenApiGeneratorPlugin)
   .disablePlugins(JavaFormatterPlugin)
-  .dependsOn(controlModels % "compile->compile")
   .settings(
     name := s"$artifactNamePrefix-servermodels",
     commonSettings,
@@ -447,6 +481,7 @@ lazy val controlModels = (project in file("server") / "target" / "controlmodels"
 
 lazy val cli = (project in file("examples") / "cli")
   .dependsOn(server % "test->test")
+  .dependsOn(serverModels)
   .dependsOn(client % "compile->compile;test->test")
   .dependsOn(controlApi % "compile->compile")
   .settings(
@@ -521,8 +556,8 @@ lazy val spark = (project in file("connectors/spark"))
   .dependsOn(client)
   .settings(
     name := s"$artifactNamePrefix-spark",
-    scalaVersion := scala212,
-    crossScalaVersions := Seq(scala212, scala213),
+    scalaVersion := scala213,
+    crossScalaVersions := Seq(scala213),
     commonSettings,
     scalaReleaseSettings,
     javaOptions ++= Seq(
@@ -537,10 +572,11 @@ lazy val spark = (project in file("connectors/spark"))
       "com.fasterxml.jackson.core" % "jackson-annotations" % "2.15.0",
       "com.fasterxml.jackson.core" % "jackson-core" % "2.15.0",
       "com.fasterxml.jackson.dataformat" % "jackson-dataformat-xml" % "2.15.0",
-      "org.antlr" % "antlr4-runtime" % "4.9.3",
-      "org.antlr" % "antlr4" % "4.9.3",
+      "org.antlr" % "antlr4-runtime" % "4.13.1",
+      "org.antlr" % "antlr4" % "4.13.1",
       "com.google.cloud.bigdataoss" % "util-hadoop" % "3.0.2" % Provided,
       "org.apache.hadoop" % "hadoop-azure" % "3.4.0" % Provided,
+      "software.amazon.awssdk" % "auth" % "2.25.37" % Provided,
     ),
     libraryDependencies ++= Seq(
       // Test dependencies
@@ -551,6 +587,7 @@ lazy val spark = (project in file("connectors/spark"))
       "org.mockito" % "mockito-junit-jupiter" % "5.12.0" % Test,
       "net.aichler" % "jupiter-interface" % JupiterKeys.jupiterVersion.value % Test,
       "org.apache.hadoop" % "hadoop-client-runtime" % "3.4.0",
+      "org.apache.hadoop" % "hadoop-aws" % "3.4.0" % Test,
       "io.delta" %% "delta-spark" % deltaVersion % Test,
     ),
     dependencyOverrides ++= Seq(
@@ -559,8 +596,8 @@ lazy val spark = (project in file("connectors/spark"))
       "com.fasterxml.jackson.core" % "jackson-annotations" % "2.15.0",
       "com.fasterxml.jackson.core" % "jackson-core" % "2.15.0",
       "com.fasterxml.jackson.dataformat" % "jackson-dataformat-xml" % "2.15.0",
-      "org.antlr" % "antlr4-runtime" % "4.9.3",
-      "org.antlr" % "antlr4" % "4.9.3",
+      "org.antlr" % "antlr4-runtime" % "4.13.1",
+      "org.antlr" % "antlr4" % "4.13.1",
     ),
     Test / unmanagedJars += (serverShaded / assembly).value,
     licenseDepExclusions := {
@@ -590,6 +627,7 @@ lazy val integrationTests = (project in file("integration-tests"))
   .settings(
     name := s"$artifactNamePrefix-integration-tests",
     commonSettings,
+    scalaVersion := scala213,
     javaOptions ++= Seq(
       "--add-exports=java.base/sun.nio.ch=ALL-UNNAMED",
     ),
@@ -599,8 +637,8 @@ lazy val integrationTests = (project in file("integration-tests"))
       "net.aichler" % "jupiter-interface" % JupiterKeys.jupiterVersion.value % Test,
       "org.assertj" % "assertj-core" % "3.26.3" % Test,
       "org.projectlombok" % "lombok" % "1.18.32" % Provided,
-      "org.apache.spark" %% "spark-sql" % "3.5.3" % Test,
-      "io.delta" %% "delta-spark" % "3.2.1" % Test,
+      "org.apache.spark" %% "spark-sql" % sparkVersion % Test,
+      "io.delta" %% "delta-spark" % deltaVersion % Test,
       "org.apache.hadoop" % "hadoop-aws" % "3.3.6" % Test,
       "org.apache.hadoop" % "hadoop-azure" % "3.3.6" % Test,
       "com.google.cloud.bigdataoss" % "gcs-connector" % "3.0.2" % Test classifier "shaded",
@@ -612,8 +650,8 @@ lazy val integrationTests = (project in file("integration-tests"))
       "com.fasterxml.jackson.core" % "jackson-annotations" % "2.15.0",
       "com.fasterxml.jackson.core" % "jackson-core" % "2.15.0",
       "com.fasterxml.jackson.dataformat" % "jackson-dataformat-xml" % "2.15.0",
-      "org.antlr" % "antlr4-runtime" % "4.9.3",
-      "org.antlr" % "antlr4" % "4.9.3",
+      "org.antlr" % "antlr4-runtime" % "4.13.1",
+      "org.antlr" % "antlr4" % "4.13.1",
       "org.apache.hadoop" % "hadoop-client-api" % "3.3.6",
     ),
     Test / javaOptions += s"-Duser.dir=${((ThisBuild / baseDirectory).value / "integration-tests").getAbsolutePath}",
@@ -637,8 +675,3 @@ def generateClasspathFile(targetDir: File, classpath: Classpath): Unit = {
 }
 
 val generate = taskKey[Unit]("generate code from APIs")
-
-// Library versions
-val jacksonVersion = "2.17.0"
-val openApiToolsJacksonBindNullableVersion = "0.2.6"
-val log4jVersion = "2.23.1"

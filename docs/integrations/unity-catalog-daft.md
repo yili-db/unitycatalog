@@ -9,7 +9,7 @@ This page shows you how to use Unity Catalog with Daft.
 To start, install Daft with the extra Unity Catalog dependencies using:
 
 ```sh
-pip install -U "getdaft[unity,deltalake]"
+pip install -U "daft[unity,deltalake]"
 ```
 
 Then import Daft and the `UnityCatalog` abstraction:
@@ -124,5 +124,5 @@ as_int   as_double
 ```
 
 Daft support for Unity Catalog is under rapid development. Refer to the
-[Daft documentation](https://www.getdaft.io/projects/docs/en/latest/user_guide/integrations/unity-catalog.html) for
+[Daft documentation](https://www.getdaft.io/projects/docs/en/stable/integrations/unity_catalog/) for
 more information.

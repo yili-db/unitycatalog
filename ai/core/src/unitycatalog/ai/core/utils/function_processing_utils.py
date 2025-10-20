@@ -1,11 +1,17 @@
 import ast
 import decimal
+import inspect
 import json
 import logging
 import os
+import re
 from hashlib import md5
+from io import StringIO
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
+import pandas as pd
+import pydantic
+from packaging.version import Version
 from pydantic import Field, create_model
 
 from unitycatalog.ai.core.utils.config import JSON_SCHEMA_TYPE, UC_LIST_FUNCTIONS_MAX_RESULTS
@@ -13,11 +19,17 @@ from unitycatalog.ai.core.utils.pydantic_utils import (
     PydanticField,
     PydanticFunctionInputParams,
     PydanticType,
+    handle_pydantic_validation_errors,
 )
-from unitycatalog.ai.core.utils.type_utils import UC_TYPE_JSON_MAPPING
+from unitycatalog.ai.core.utils.type_utils import (
+    UC_DEFAULT_VALUE_TO_PYTHON_EQUIVALENT_MAPPING,
+    UC_TYPE_JSON_MAPPING,
+)
 from unitycatalog.ai.core.utils.validation_utils import FullFunctionName
 
 _logger = logging.getLogger(__name__)
+
+IS_PYDANTIC_V2_OR_NEWER = Version(pydantic.VERSION).major >= 2
 
 
 def uc_type_json_to_pydantic_type(
@@ -164,25 +176,35 @@ def process_function_names(
             full_func_name = FullFunctionName.validate_full_function_name(name)
             if full_func_name.function == "*":
                 token = None
+                # functions with BROWSE permission should not be included since this
+                # function should include only the functions that can be executed
+                list_kwarg = (
+                    {"include_browse": False}
+                    if "include_browse" in inspect.signature(client.list_functions).parameters
+                    else {}
+                )
                 while True:
                     functions = client.list_functions(
                         catalog=full_func_name.catalog,
                         schema=full_func_name.schema,
                         max_results=max_results,
                         page_token=token,
+                        **list_kwarg,
                     )
+                    # TODO: get functions in parallel
                     for f in functions:
                         if f.full_name not in tools_dict:
                             tools_dict[f.full_name] = uc_function_to_tool_func(
-                                function_info=f, client=client, **kwargs
+                                function_name=f.full_name, client=client, **kwargs
                             )
                     token = functions.token
                     if token is None:
                         break
             else:
-                tools_dict[name] = uc_function_to_tool_func(
-                    function_name=name, client=client, **kwargs
-                )
+                tool = uc_function_to_tool_func(function_name=name, client=client, **kwargs)
+                # Skip adding this tool if this function returns None
+                if tool:
+                    tools_dict[name] = tool
     return tools_dict
 
 
@@ -208,8 +230,14 @@ def param_info_to_pydantic_type(param_info: Any, strict: bool = False) -> Pydant
     description = param_info.comment or ""
     if param_info.parameter_default:
         # Note: DEFAULT is supported for LANGUAGE SQL only.
-        # TODO: verify this for all types
-        default = json.loads(param_info.parameter_default)
+        if param_info.parameter_default.strip().upper() == "NULL":
+            default = None
+        else:
+            try:
+                default = json.loads(param_info.parameter_default)
+            except json.JSONDecodeError:
+                # If JSON decoding fails, treat it as a string
+                default = param_info.parameter_default.strip()
         description = f"{description} (Default: {param_info.parameter_default})"
     elif nullable:
         pydantic_field_type = Optional[pydantic_field_type]
@@ -255,11 +283,14 @@ def generate_function_input_params_schema(
             pydantic_field.pydantic_type,
             Field(default=pydantic_field.default, description=pydantic_field.description),
         )
-    model = create_model(params_name, **fields)
+    if IS_PYDANTIC_V2_OR_NEWER:
+        model = create_model(params_name, **fields, __config__={"extra": "forbid"})
+    else:
+        model = create_model(params_name, **fields, config=pydantic.ConfigDict(extra="forbid"))
+
     return PydanticFunctionInputParams(pydantic_model=model, strict=pydantic_field.strict)
 
 
-# TODO: add UC OSS support
 def supported_param_info_types():
     types = ()
     try:
@@ -269,10 +300,16 @@ def supported_param_info_types():
     except ImportError:
         pass
 
+    try:
+        from unitycatalog.client.models import FunctionParameterInfo as UCFunctionParameterInfo
+
+        types += (UCFunctionParameterInfo,)
+    except ImportError:
+        pass
+
     return types
 
 
-# TODO: add UC OSS support
 def supported_function_info_types():
     types = ()
     try:
@@ -281,65 +318,160 @@ def supported_function_info_types():
         types += (FunctionInfo,)
     except ImportError:
         pass
+    try:
+        from unitycatalog.client.models import FunctionInfo as UCFunctionInfo
+
+        types += (UCFunctionInfo,)
+    except ImportError:
+        pass
 
     return types
 
 
-def is_python_code(code_str: str) -> bool:
-    """Check if the provided string is valid Python code."""
-    try:
-        ast.parse(code_str)
-        return True
-    except SyntaxError:
-        return False
-
-
-def convert_quoting_to_sql_safe_format(string_value: str) -> str:
+def process_retriever_output(result: "FunctionExecutionResult") -> List[Dict[str, Any]]:
     """
-    Convert a string to a SQL-safe format by escaping single quotes.
+    Process retriever output from result into mlflow.entities.Document format for tracing.
 
     Args:
-        string_value: The string to be converted.
+        result: The result of the function execution to be processed.
 
     Returns:
-        str: The SQL-safe string.
+        Retriever output formatted into a list of Documents.
     """
-    has_single_quote = "'" in string_value
-    has_double_quote = '"' in string_value
-
-    if not has_single_quote and not has_double_quote:
-        return string_value
-
-    if has_single_quote and not has_double_quote:
-        string_value = string_value.replace("'", '"')
-    elif has_single_quote and has_double_quote:
-        raise ValueError(
-            "The argument passed in has been detected as Python code that contains both single and double quotes. "
-            "This is not supported. Code must use only one style of quotation. Please fix the code and try again."
-        )
-    return string_value
-
-
-def sanitize_string_inputs_of_function_params(param_value: Any) -> str:
-    """
-    Sanitize string inputs of function parameters to allow for code block submission.
-
-    Args:
-        param_value: The value of the parameter to sanitize.
-
-    Returns:
-        A sanitized string of the argument value.
-    """
-
-    if isinstance(param_value, str) and is_python_code(param_value):
-        # Escape single quotes, backslashes, and control characters that would otherwise break Python code execution
-        parsed = (
-            param_value.replace("\\", "\\\\")
-            .replace("\r", "\\r")
-            .replace("\n", "\\n")
-            .replace("\t", "\\t")
-        )
-        quotes_parsed = convert_quoting_to_sql_safe_format(parsed)
+    if result.format == "CSV":
+        df = pd.read_csv(StringIO(result.value))
+        if "metadata" in df.columns:
+            df["metadata"] = df["metadata"].apply(ast.literal_eval)
+        output = df.to_dict(orient="records")
     else:
-        quotes_parsed = param_value
-    return str(quotes_parsed)
+        value = result.value
+        output = ast.literal_eval(value) if isinstance(value, str) else value
+
+    return output
+
+
+def _execute_uc_function_with_retriever_tracing(
+    _execute_uc_function: Callable,
+    function_info: "FunctionInfo",
+    parameters: Dict[str, Any],
+    **kwargs: Any,
+) -> "FunctionExecutionResult":
+    """
+    Executes a UC function with MLflow tracing with span type RETRIEVER enabled. If MLflow cannot
+    be imported, the function executes without tracing and logs a warning.
+
+    Args:
+        _execute_uc_function (Callable): A function that executes the given UC function.
+        function_info (FunctionInfo): Metadata about the UC function to be executed.
+        parameters (Dict[str, Any]): Parameters to be passed to the function during execution.
+        **kwargs (Any): Additional keyword arguments to be passed to the function.
+
+    Returns:
+        Any: The output of the function execution.
+    """
+    try:
+        import mlflow
+        from mlflow.entities import SpanType
+
+        result = None
+
+        @mlflow.trace(name=function_info.full_name, span_type=SpanType.RETRIEVER)
+        def execute_retriever(parameters):
+            # Set inputs manually so we log {"query": "..."} instead of {"parameters": {"query": "..."}}
+            if span := mlflow.get_current_active_span():
+                span.set_inputs(parameters)
+
+            nonlocal result
+            result = _execute_uc_function(function_info, parameters, **kwargs)
+
+            # Re-raise errors so they can get traced
+            if result.error:
+                raise Exception(result.error)
+
+            return process_retriever_output(result)
+
+        try:
+            execute_retriever(parameters)
+        except Exception:  # Catch all errors that are re-raised
+            pass
+
+        return result
+    except ImportError as e:
+        _logger.warn(
+            f"Skipping tracing {function_info.full_name} as a retriever because of the following error:\n {e}"
+        )
+        return _execute_uc_function(function_info, parameters, **kwargs)
+
+
+@handle_pydantic_validation_errors
+def process_function_parameter_defaults(
+    function_info: "FunctionInfo", parameters: Optional[dict[str, Any]] = None
+) -> dict[str, Any]:
+    """
+    Handle default values for input parameters.
+
+    Args:
+        function_info: The FunctionInfo object containing the function metadata.
+        parameters: The parameters to handle.
+
+    Returns:
+        The updated parameters with default values filled in.
+    """
+    defaults = {}
+    if function_info.input_params and function_info.input_params.parameters:
+        for param in function_info.input_params.parameters:
+            if param.parameter_default is not None:
+                default_str = param.parameter_default.strip()
+                upper_str = default_str.upper()
+                # NB: Pydantic requires a NoneType definition to be explicity set directly. If retrieiving
+                # this type from a lookup mapping (as is done with True / False as registered in
+                # UC_DEFAULT_VALUE_TO_PYTHON_EQUIVALENT_MAPPING), it will not be recognized
+                # as a NoneType properly.
+                if upper_str == "NULL":
+                    defaults[param.name] = None
+                elif upper_str in UC_DEFAULT_VALUE_TO_PYTHON_EQUIVALENT_MAPPING:
+                    defaults[param.name] = UC_DEFAULT_VALUE_TO_PYTHON_EQUIVALENT_MAPPING[upper_str]
+                else:
+                    try:
+                        defaults[param.name] = ast.literal_eval(default_str)
+                    except (ValueError, SyntaxError):
+                        try:
+                            defaults[param.name] = json.loads(default_str)
+                        except json.JSONDecodeError:
+                            defaults[param.name] = default_str
+
+    if parameters is None:
+        parameters = {}
+    return defaults | parameters
+
+
+def extract_function_name(sql_body: str) -> str:
+    """
+    Extract function name from the sql body.
+    CREATE FUNCTION syntax reference: https://docs.databricks.com/en/sql/language-manual/sql-ref-syntax-ddl-create-sql-function.html#syntax
+    """
+    # NOTE: catalog/schema/function names follow guidance here:
+    # https://docs.databricks.com/en/sql/language-manual/sql-ref-names.html#catalog-name
+    pattern = re.compile(
+        r"""
+        CREATE\s+(?:OR\s+REPLACE\s+)?      # Match 'CREATE OR REPLACE' or just 'CREATE'
+        (?:TEMPORARY\s+)?                  # Match optional 'TEMPORARY'
+        FUNCTION\s+(?:IF\s+NOT\s+EXISTS\s+)?  # Match 'FUNCTION' and optional 'IF NOT EXISTS'
+        (?P<name>[^ /.]+\.[^ /.]+\.[^ /.]+)          # Capture the function name (including schema if present)
+        \s*\(                              # Match opening parenthesis after function name
+    """,
+        re.IGNORECASE | re.VERBOSE,
+    )
+
+    match = pattern.search(sql_body)
+    if match:
+        result = match.group("name")
+        full_function_name = FullFunctionName.validate_full_function_name(result)
+        # backticks are only required in SQL, not in python APIs
+        return str(full_function_name)
+    raise ValueError(
+        f"Could not extract function name from the sql body: {sql_body}.\nPlease "
+        "make sure the sql body follows the syntax of CREATE FUNCTION "
+        "statement in Databricks: "
+        "https://docs.databricks.com/en/sql/language-manual/sql-ref-syntax-ddl-create-sql-function.html#syntax."
+    )

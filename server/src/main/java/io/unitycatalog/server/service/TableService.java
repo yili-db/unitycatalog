@@ -11,19 +11,13 @@ import io.unitycatalog.server.auth.UnityCatalogAuthorizer;
 import io.unitycatalog.server.auth.annotation.AuthorizeExpression;
 import io.unitycatalog.server.auth.annotation.AuthorizeKey;
 import io.unitycatalog.server.auth.annotation.AuthorizeKeys;
-import io.unitycatalog.server.auth.decorator.UnityAccessEvaluator;
 import io.unitycatalog.server.exception.GlobalExceptionHandler;
 import io.unitycatalog.server.model.CatalogInfo;
 import io.unitycatalog.server.model.CreateTable;
 import io.unitycatalog.server.model.ListTablesResponse;
 import io.unitycatalog.server.model.SchemaInfo;
 import io.unitycatalog.server.model.TableInfo;
-import io.unitycatalog.server.persist.CatalogRepository;
-import io.unitycatalog.server.persist.MetastoreRepository;
-import io.unitycatalog.server.persist.SchemaRepository;
-import io.unitycatalog.server.persist.TableRepository;
-import io.unitycatalog.server.persist.model.Privileges;
-import io.unitycatalog.server.utils.IdentityUtils;
+import io.unitycatalog.server.persist.*;
 import lombok.SneakyThrows;
 
 import java.util.List;
@@ -37,19 +31,20 @@ import static io.unitycatalog.server.model.SecurableType.SCHEMA;
 import static io.unitycatalog.server.model.SecurableType.TABLE;
 
 @ExceptionHandler(GlobalExceptionHandler.class)
-public class TableService {
+public class TableService extends AuthorizedService {
 
-  private static final TableRepository TABLE_REPOSITORY = TableRepository.getInstance();
-  private static final SchemaRepository SCHEMA_REPOSITORY = SchemaRepository.getInstance();
-  private static final CatalogRepository CATALOG_REPOSITORY = CatalogRepository.getInstance();
-
-  private final UnityCatalogAuthorizer authorizer;
-  private final UnityAccessEvaluator evaluator;
+  private final TableRepository tableRepository;
+  private final SchemaRepository schemaRepository;
+  private final CatalogRepository catalogRepository;
+  private final MetastoreRepository metastoreRepository;
 
   @SneakyThrows
-  public TableService(UnityCatalogAuthorizer authorizer) {
-    this.authorizer = authorizer;
-    evaluator = new UnityAccessEvaluator(authorizer);
+  public TableService(UnityCatalogAuthorizer authorizer, Repositories repositories) {
+    super(authorizer, repositories.getUserRepository());
+    this.tableRepository = repositories.getTableRepository();
+    this.schemaRepository = repositories.getSchemaRepository();
+    this.catalogRepository = repositories.getCatalogRepository();
+    this.metastoreRepository = repositories.getMetastoreRepository();
   }
 
   @Post("")
@@ -65,8 +60,12 @@ public class TableService {
           })
           CreateTable createTable) {
     assert createTable != null;
-    TableInfo tableInfo = TABLE_REPOSITORY.createTable(createTable);
-    initializeAuthorizations(tableInfo);
+    TableInfo tableInfo = tableRepository.createTable(createTable);
+    
+    SchemaInfo schemaInfo =
+        schemaRepository.getSchema(tableInfo.getCatalogName() + "." + tableInfo.getSchemaName());
+    initializeHierarchicalAuthorization(tableInfo.getTableId(), schemaInfo.getSchemaId());
+    
     return HttpResponse.ofJson(tableInfo);
   }
 
@@ -75,12 +74,12 @@ public class TableService {
           #authorize(#principal, #metastore, OWNER) ||
           #authorize(#principal, #catalog, OWNER) ||
           (#authorize(#principal, #schema, OWNER) && #authorize(#principal, #catalog, USE_CATALOG)) ||
-          (#authorize(#principal, #schema, USE_SCHEMA) && #authorize(#principal, #catalog, USE_CATALOG) && #authorizeAny(#principal, #table, OWNER, SELECT))
+          (#authorize(#principal, #schema, USE_SCHEMA) && #authorize(#principal, #catalog, USE_CATALOG) && #authorizeAny(#principal, #table, OWNER, SELECT, MODIFY))
           """)
   @AuthorizeKey(METASTORE)
   public HttpResponse getTable(@Param("full_name") @AuthorizeKey(TABLE) String fullName) {
     assert fullName != null;
-    TableInfo tableInfo = TABLE_REPOSITORY.getTable(fullName);
+    TableInfo tableInfo = tableRepository.getTable(fullName);
     return HttpResponse.ofJson(tableInfo);
   }
 
@@ -94,7 +93,7 @@ public class TableService {
       @Param("omit_properties") Optional<Boolean> omitProperties,
       @Param("omit_columns") Optional<Boolean> omitColumns) {
 
-    ListTablesResponse listTablesResponse = TABLE_REPOSITORY.listTables(
+    ListTablesResponse listTablesResponse = tableRepository.listTables(
             catalogName,
             schemaName,
             maxResults,
@@ -106,7 +105,7 @@ public class TableService {
           #authorize(#principal, #metastore, OWNER) ||
           #authorize(#principal, #catalog, OWNER) ||
           (#authorize(#principal, #schema, OWNER) && #authorize(#principal, #catalog, USE_CATALOG)) ||
-          (#authorize(#principal, #schema, USE_SCHEMA) && #authorize(#principal, #catalog, USE_CATALOG) && #authorizeAny(#principal, #table, OWNER, SELECT))
+          (#authorize(#principal, #schema, USE_SCHEMA) && #authorize(#principal, #catalog, USE_CATALOG) && #authorizeAny(#principal, #table, OWNER, SELECT, MODIFY))
           """, listTablesResponse.getTables());
 
     return HttpResponse.ofJson(listTablesResponse);
@@ -119,27 +118,31 @@ public class TableService {
           (#authorize(#principal, #schema, USE_SCHEMA) && #authorize(#principal, #catalog, USE_CATALOG) && #authorize(#principal, #table, OWNER))
           """)
   public HttpResponse deleteTable(@Param("full_name") @AuthorizeKey(TABLE) String fullName) {
-    TableInfo tableInfo = TABLE_REPOSITORY.getTable(fullName);
-    TABLE_REPOSITORY.deleteTable(fullName);
-    removeAuthorizations(tableInfo);
+    TableInfo tableInfo = tableRepository.getTable(fullName);
+    tableRepository.deleteTable(fullName);
+    
+    SchemaInfo schemaInfo =
+        schemaRepository.getSchema(tableInfo.getCatalogName() + "." + tableInfo.getSchemaName());
+    removeHierarchicalAuthorizations(tableInfo.getTableId(), schemaInfo.getSchemaId());
+    
     return HttpResponse.of(HttpStatus.OK);
   }
 
   public void filterTables(String expression, List<TableInfo> entries) {
     // TODO: would be nice to move this to filtering in the Decorator response
-    UUID principalId = IdentityUtils.findPrincipalId();
+    UUID principalId = userRepository.findPrincipalId();
 
     evaluator.filter(
             principalId,
             expression,
             entries,
             ti -> {
-              CatalogInfo catalogInfo = CATALOG_REPOSITORY.getCatalog(ti.getCatalogName());
+              CatalogInfo catalogInfo = catalogRepository.getCatalog(ti.getCatalogName());
               SchemaInfo schemaInfo =
-                      SCHEMA_REPOSITORY.getSchema(ti.getCatalogName() + "." + ti.getSchemaName());
+                      schemaRepository.getSchema(ti.getCatalogName() + "." + ti.getSchemaName());
               return Map.of(
                       METASTORE,
-                      MetastoreRepository.getInstance().getMetastoreId(),
+                      metastoreRepository.getMetastoreId(),
                       CATALOG,
                       UUID.fromString(catalogInfo.getId()),
                       SCHEMA,
@@ -147,27 +150,5 @@ public class TableService {
                       TABLE,
                       UUID.fromString(ti.getTableId()));
             });
-  }
-
-  private void initializeAuthorizations(TableInfo tableInfo) {
-    SchemaInfo schemaInfo =
-        SCHEMA_REPOSITORY.getSchema(tableInfo.getCatalogName() + "." + tableInfo.getSchemaName());
-    UUID principalId = IdentityUtils.findPrincipalId();
-    // add owner privilege
-    authorizer.grantAuthorization(
-        principalId, UUID.fromString(tableInfo.getTableId()), Privileges.OWNER);
-    // make table a child of the schema
-    authorizer.addHierarchyChild(
-        UUID.fromString(schemaInfo.getSchemaId()), UUID.fromString(tableInfo.getTableId()));
-  }
-
-  private void removeAuthorizations(TableInfo tableInfo) {
-    SchemaInfo schemaInfo =
-        SCHEMA_REPOSITORY.getSchema(tableInfo.getCatalogName() + "." + tableInfo.getSchemaName());
-    // remove any direct authorizations on the table
-    authorizer.clearAuthorizationsForResource(UUID.fromString(tableInfo.getTableId()));
-    // remove link to the parent schema
-    authorizer.removeHierarchyChild(
-        UUID.fromString(schemaInfo.getSchemaId()), UUID.fromString(tableInfo.getTableId()));
   }
 }

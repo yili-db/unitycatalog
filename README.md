@@ -11,7 +11,7 @@ Unity Catalog is the industry’s only universal catalog for data and AI.
 - **Open source API and implementation** - OpenAPI spec and OSS implementation (Apache 2.0 license). It is also compatible with Apache Hive's metastore API and Apache Iceberg's REST catalog API. Unity Catalog is currently a sandbox project with LF AI and Data Foundation (part of the Linux Foundation).
 - **Unified governance** for data and AI - Govern and secure tabular data, unstructured assets, and AI assets with a single interface.
 
-The first release of Unity Catalog focuses on a core set of APIs for tables, unstructured data, and AI assets - with more to come soon on governance, access, and client interoperability. This is just the beginning!
+The current roadmap is available at [Unity Catalog Roadmap](roadmap.md).
 
 ![UC Hero Image](./docs/assets/images/uc.png)
 
@@ -29,6 +29,7 @@ This is a community effort. Unity Catalog is supported by
 - [Granica](https://granica.ai/)
 - [Immuta](https://www.immuta.com/)
 - [Informatica](https://www.informatica.com/)
+- [Kuzu](https://www.kuzudb.com/)
 - [LanceDB](https://lancedb.com/)
 - [LangChain](https://www.langchain.com/)
 - [LlamaIndex](https://www.llamaindex.ai/)
@@ -57,6 +58,8 @@ Let's take Unity Catalog for spin. In this guide, we are going to do the followi
   An example project is provided to demonstrate how to use the UC SDK for various assets
   as well as provide a convenient way to explore the content of any UC server implementation.
 
+> If you prefer to run Unity Catalog in Docker use `docker compose up`. See the [Docker Compose docs](./docs/docker_compose.md) for more details.
+
 ### Prerequisites
 
 You have to ensure that your local environment has the following:
@@ -64,8 +67,6 @@ You have to ensure that your local environment has the following:
 - Clone this repository.
 - Ensure the `JAVA_HOME` environment variable your terminal is configured to point to JDK17.
 - Compile the project using `build/sbt package`
-
-> If you prefer to run this using the Unity Catalog Dockerized Environment, please refer to the Docker [README.md](./docker/README.md)
 
 ### Run the UC Server
 
@@ -152,16 +153,17 @@ To quit DuckDB, press `Ctrl`+`D` (if your platform supports it), press `Ctrl`+`C
 To use the Unity Catalog UI, start a new terminal and ensure you have already started the UC server (e.g., `./bin/start-uc-server`)
 
 **Prerequisites**
-* Node: https://nodejs.org/en/download/package-manager
-* Yarn: https://classic.yarnpkg.com/lang/en/docs/install
+
+- Node: https://nodejs.org/en/download/package-manager
+- Yarn: https://classic.yarnpkg.com/lang/en/docs/install
 
 **How to start the UI through yarn**
+
 ```
 cd /ui
 yarn install
 yarn start
 ```
-
 
 ## CLI tutorial
 
@@ -176,12 +178,12 @@ See the [cli usage](docs/usage/cli.md) for more details.
 
 ## Building Unity Catalog
 
-Unity Catalog can be built using [sbt](https://www.scala-sbt.org/).
+Unity Catalog is built using [sbt](https://www.scala-sbt.org/).
 
 To build UC (incl. [Spark Integration](./connectors/spark) module), run the following command:
 
-```shell
-build/sbt clean package publishLocal spark/publishLocal
+```sh
+build/sbt clean package publishLocal
 ```
 
 Refer to [sbt docs](https://www.scala-sbt.org/1.x/docs/) for more commands.

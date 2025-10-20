@@ -1,16 +1,19 @@
-from typing import Any, Dict, List, Optional
+import logging
+from typing import Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from openai import pydantic_function_tool
 from openai.types.chat import ChatCompletionToolParam
-from unitycatalog.ai.core.client import BaseFunctionClient
+from unitycatalog.ai.core.base import BaseFunctionClient
 from unitycatalog.ai.core.utils.client_utils import validate_or_set_default_client
 from unitycatalog.ai.core.utils.function_processing_utils import (
     generate_function_input_params_schema,
     get_tool_name,
     process_function_names,
 )
+
+_logger = logging.getLogger(__name__)
 
 
 class UCFunctionToolkit(BaseModel):
@@ -29,6 +32,11 @@ class UCFunctionToolkit(BaseModel):
         description="The tools dictionary storing the function name and tool definition mapping, no need to provide this field",
     )
 
+    filter_accessible_functions: bool = Field(
+        default=False,
+        description="When set to true, UCFunctionToolkit is initialized with functions that only the client has access to",
+    )
+
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     @model_validator(mode="after")
@@ -39,6 +47,7 @@ class UCFunctionToolkit(BaseModel):
             function_names=self.function_names,
             tools_dict={},
             client=self.client,
+            filter_accessible_functions=self.filter_accessible_functions,
             uc_function_to_tool_func=self.uc_function_to_openai_function_definition,
         )
         return self
@@ -46,31 +55,28 @@ class UCFunctionToolkit(BaseModel):
     @staticmethod
     def uc_function_to_openai_function_definition(
         *,
+        function_name: str,
         client: Optional[BaseFunctionClient] = None,
-        function_name: Optional[str] = None,
-        function_info: Optional[Any] = None,
-    ) -> ChatCompletionToolParam:
+        filter_accessible_functions: bool = False,
+    ) -> Optional[ChatCompletionToolParam]:
         """
         Convert a UC function to OpenAI function definition.
 
         Args:
-            client: The client for managing functions, must be an instance of BaseFunctionClient
             function_name: The full name of the function in the form of 'catalog.schema.function'
-            function_info: The function info object returned by the client.get_function() method
-
-            .. note::
-                Only one of function_name or function_info should be provided.
+            client: The client for managing functions, must be an instance of BaseFunctionClient
         """
-        if function_name and function_info:
-            raise ValueError("Only one of function_name or function_info should be provided.")
         client = validate_or_set_default_client(client)
 
-        if function_name:
+        if function_name is None:
+            raise ValueError("function_name must be provided.")
+        try:
             function_info = client.get_function(function_name)
-        elif function_info:
-            function_name = function_info.full_name
-        else:
-            raise ValueError("Either function_name or function_info should be provided.")
+        except PermissionError as e:
+            _logger.info(f"Skipping {function_name} due to permission errors.")
+            if filter_accessible_functions:
+                return None
+            raise e
 
         function_input_params_schema = generate_function_input_params_schema(
             function_info, strict=True

@@ -1,16 +1,28 @@
 import json
+import logging
+import warnings
 from typing import Any, Dict, List, Optional
 
+from langchain_core._api.deprecation import LangChainDeprecationWarning
+
+warnings.filterwarnings(
+    "ignore",
+    message=r".*As of langchain-core 0\.3\.0, LangChain uses pydantic v2 internally.*",
+    category=LangChainDeprecationWarning,
+)
 from langchain_core.pydantic_v1 import BaseModel, Field, root_validator
 from langchain_core.tools import StructuredTool
 
-from unitycatalog.ai.core.client import BaseFunctionClient
+from unitycatalog.ai.core.base import BaseFunctionClient
 from unitycatalog.ai.core.utils.client_utils import validate_or_set_default_client
 from unitycatalog.ai.core.utils.function_processing_utils import (
     generate_function_input_params_schema,
     get_tool_name,
     process_function_names,
 )
+from unitycatalog.ai.core.utils.validation_utils import mlflow_tracing_enabled
+
+_logger = logging.getLogger(__name__)
 
 
 class UnityCatalogTool(StructuredTool):
@@ -38,6 +50,11 @@ class UCFunctionToolkit(BaseModel):
         description="The client for managing functions, must be an instance of BaseFunctionClient",
     )
 
+    filter_accessible_functions: bool = Field(
+        default=False,
+        description="When set to true, UCFunctionToolkit is initialized with functions that only the client has access to",
+    )
+
     class Config:
         arbitrary_types_allowed = True
 
@@ -53,14 +70,7 @@ class UCFunctionToolkit(BaseModel):
             function_names=function_names,
             tools_dict=tools_dict,
             client=client,
-            uc_function_to_tool_func=cls.uc_function_to_langchain_tool,
-        )
-        tools_dict = values.get("tools_dict", {})
-
-        values["tools_dict"] = process_function_names(
-            function_names=function_names,
-            tools_dict=tools_dict,
-            client=client,
+            filter_accessible_functions=values["filter_accessible_functions"],
             uc_function_to_tool_func=cls.uc_function_to_langchain_tool,
         )
         return values
@@ -68,37 +78,35 @@ class UCFunctionToolkit(BaseModel):
     @staticmethod
     def uc_function_to_langchain_tool(
         *,
+        function_name: str,
         client: Optional[BaseFunctionClient] = None,
-        function_name: Optional[str] = None,
-        function_info: Optional[Any] = None,
-    ) -> UnityCatalogTool:
+        filter_accessible_functions: bool = False,
+    ) -> Optional[UnityCatalogTool]:
         """
         Convert a UC function to Langchain StructuredTool
 
         Args:
-            client: The client for managing functions, must be an instance of BaseFunctionClient
             function_name: The full name of the function in the form of 'catalog.schema.function'
-            function_info: The function info object returned by the client.get_function() method
-
-            .. note::
-                Only one of function_name or function_info should be provided.
+            client: The client for managing functions, must be an instance of BaseFunctionClient
         """
-        if function_name and function_info:
-            raise ValueError("Only one of function_name or function_info should be provided.")
         client = validate_or_set_default_client(client)
 
-        if function_name:
+        if function_name is None:
+            raise ValueError("function_name must be provided.")
+        try:
             function_info = client.get_function(function_name)
-        elif function_info:
-            function_name = function_info.full_name
-        else:
-            raise ValueError("Either function_name or function_info should be provided.")
+        except PermissionError as e:
+            _logger.info(f"Skipping {function_name} due to permission errors.")
+            if filter_accessible_functions:
+                return None
+            raise e
 
         def func(*args: Any, **kwargs: Any) -> str:
             args_json = json.loads(json.dumps(kwargs, default=str))
             result = client.execute_function(
                 function_name=function_name,
                 parameters=args_json,
+                enable_retriever_tracing=mlflow_tracing_enabled("langchain"),
             )
             return result.to_json()
 

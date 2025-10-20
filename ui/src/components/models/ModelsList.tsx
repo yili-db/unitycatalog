@@ -17,7 +17,10 @@ export default function ModelsList({
   schema,
   filters,
 }: ModelsListProps) {
-  const { data, isLoading } = useListModels({ catalog, schema });
+  const { data, isLoading } = useListModels({
+    catalog_name: catalog,
+    schema_name: schema,
+  });
   const navigate = useNavigate();
 
   return (
@@ -31,6 +34,7 @@ export default function ModelsList({
           `/models/${record.catalog_name}/${record.schema_name}/${record.name}`,
         )
       }
+      rowKey={(record) => `model-${record.id}`}
       columns={[
         {
           title: 'Name',

@@ -1,4 +1,5 @@
 import json
+import logging
 from dataclasses import asdict
 from typing import Any, Callable, Dict, List, Optional
 
@@ -6,13 +7,16 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from llama_index.core.tools import FunctionTool
 from llama_index.core.tools.types import ToolMetadata
-from unitycatalog.ai.core.client import BaseFunctionClient
+from unitycatalog.ai.core.base import BaseFunctionClient
 from unitycatalog.ai.core.utils.client_utils import validate_or_set_default_client
 from unitycatalog.ai.core.utils.function_processing_utils import (
     generate_function_input_params_schema,
     get_tool_name,
     process_function_names,
 )
+from unitycatalog.ai.core.utils.validation_utils import mlflow_tracing_enabled
+
+_logger = logging.getLogger(__name__)
 
 
 class UnityCatalogTool(FunctionTool):
@@ -89,6 +93,10 @@ class UCFunctionToolkit(BaseModel):
         default=False,
         description="Whether the tool should return the output directly",
     )
+    filter_accessible_functions: bool = Field(
+        default=False,
+        description="When set to true, UCFunctionToolkit is initialized with functions that only the client has access to",
+    )
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -110,6 +118,7 @@ class UCFunctionToolkit(BaseModel):
             function_names=self.function_names,
             tools_dict=self.tools_dict,
             client=client,
+            filter_accessible_functions=self.filter_accessible_functions,
             uc_function_to_tool_func=self.uc_function_to_llama_tool,
             return_direct=self.return_direct,
         )
@@ -127,38 +136,33 @@ class UCFunctionToolkit(BaseModel):
     @staticmethod
     def uc_function_to_llama_tool(
         *,
+        function_name: str,
         client: Optional[BaseFunctionClient] = None,
-        function_name: Optional[str] = None,
-        function_info: Optional[Any] = None,
-        return_direct: Optional[bool] = False,
-    ) -> FunctionTool:
+        return_direct: bool = False,
+        filter_accessible_functions: bool = False,
+    ) -> Optional[FunctionTool]:
         """
         Converts a Unity Catalog function into a Llama tool.
 
         Args:
+            function_name (str): The name of the function in 'catalog.schema.function' format.
             client (Optional[BaseFunctionClient]): The client used to manage functions. Defaults to None.
-            function_name (Optional[str]): The name of the function in 'catalog.schema.function' format.
-                Either function_name or function_info should be provided.
-            function_info (Optional[Any]): The function information object. Either function_name or
-                function_info should be provided.
             return_direct (Optional[bool]): Whether the tool should return the output directly. Defaults to False.
 
         Returns:
             FunctionTool: The constructed tool from the Unity Catalog function.
-
-        Raises:
-            ValueError: If neither or both of function_name and function_info are provided.
         """
-        if function_name and function_info:
-            raise ValueError("Only one of function_name or function_info should be provided.")
         client = validate_or_set_default_client(client)
 
-        if function_name:
+        if function_name is None:
+            raise ValueError("function_name must be provided.")
+        try:
             function_info = client.get_function(function_name)
-        elif function_info:
-            function_name = function_info.full_name
-        else:
-            raise ValueError("Either function_name or function_info should be provided.")
+        except PermissionError as e:
+            _logger.info(f"Skipping {function_name} due to permission errors.")
+            if filter_accessible_functions:
+                return None
+            raise e
 
         fn_schema = generate_function_input_params_schema(function_info)
 
@@ -177,6 +181,7 @@ class UCFunctionToolkit(BaseModel):
             result = client.execute_function(
                 function_name=function_name,
                 parameters=args_json,
+                enable_retriever_tracing=mlflow_tracing_enabled("llama_index"),
             )
             return result.to_json()
 

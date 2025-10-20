@@ -3,73 +3,63 @@ package io.unitycatalog.server.service;
 import com.auth0.jwt.JWT;
 import com.auth0.jwt.JWTVerifier;
 import com.auth0.jwt.interfaces.DecodedJWT;
-import com.fasterxml.jackson.annotation.JsonInclude;
-import com.fasterxml.jackson.databind.PropertyNamingStrategies;
-import com.fasterxml.jackson.databind.annotation.JsonNaming;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.linecorp.armeria.common.*;
+import com.linecorp.armeria.common.AggregatedHttpRequest;
+import com.linecorp.armeria.common.MediaType;
+import com.linecorp.armeria.common.QueryParams;
 import com.linecorp.armeria.common.annotation.Nullable;
+import com.linecorp.armeria.server.ServiceRequestContext;
 import com.linecorp.armeria.server.annotation.ExceptionHandler;
 import com.linecorp.armeria.server.annotation.Param;
 import com.linecorp.armeria.server.annotation.Post;
+import com.linecorp.armeria.server.annotation.RequestConverter;
+import com.linecorp.armeria.server.annotation.RequestConverterFunction;
+import io.unitycatalog.control.model.AccessTokenType;
+import io.unitycatalog.control.model.GrantType;
+import io.unitycatalog.control.model.OAuthTokenExchangeForm;
+import io.unitycatalog.control.model.OAuthTokenExchangeInfo;
+import io.unitycatalog.control.model.TokenEndpointExtensionType;
+import io.unitycatalog.control.model.TokenType;
 import io.unitycatalog.control.model.User;
 import io.unitycatalog.server.exception.ErrorCode;
 import io.unitycatalog.server.exception.GlobalExceptionHandler;
 import io.unitycatalog.server.exception.OAuthInvalidRequestException;
+import io.unitycatalog.server.persist.Repositories;
 import io.unitycatalog.server.persist.UserRepository;
 import io.unitycatalog.server.security.JwtClaim;
 import io.unitycatalog.server.security.SecurityContext;
 import io.unitycatalog.server.utils.JwksOperations;
 import io.unitycatalog.server.utils.ServerProperties;
+import java.lang.reflect.ParameterizedType;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.Map;
 import java.util.Optional;
-import lombok.Builder;
-import lombok.Getter;
-import lombok.NonNull;
-import lombok.ToString;
-import lombok.extern.jackson.Jacksonized;
+import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 @ExceptionHandler(GlobalExceptionHandler.class)
 public class AuthService {
 
-  // TODO: need common module for these constants, they are reused in the CLI
-  interface Fields {
-    String GRANT_TYPE = "grant_type";
-    String CLIENT_ID = "client_id";
-    String CLIENT_SECRET = "client_secret";
-    String SUBJECT_TOKEN = "subject_token";
-    String SUBJECT_TOKEN_TYPE = "subject_token_type";
-    String ACTOR_TOKEN = "actor_token";
-    String ACTOR_TOKEN_TYPE = "actor_token_type";
-    String REQUESTED_TOKEN_TYPE = "requested_token_type";
-  }
-
-  interface GrantTypes {
-    String TOKEN_EXCHANGE = "urn:ietf:params:oauth:grant-type:token-exchange";
-  }
-
-  interface TokenTypes {
-    String ACCESS = "urn:ietf:params:oauth:token-type:access_token";
-    String ID = "urn:ietf:params:oauth:token-type:id_token";
-    String JWT = "urn:ietf:params:oauth:token-type:jwt";
-  }
-
-  interface AuthTypes {
-    String BEARER = "Bearer";
-  }
-
   private static final Logger LOGGER = LoggerFactory.getLogger(AuthService.class);
-  private static final UserRepository USER_REPOSITORY = UserRepository.getInstance();
+  private final UserRepository userRepository;
 
   private final SecurityContext securityContext;
   private final JwksOperations jwksOperations;
+  private final ServerProperties serverProperties;
 
-  private static final String COOKIE = "cookie";
+  private static final String EMPTY_RESPONSE = "{}";
 
-  public AuthService(SecurityContext securityContext) {
+  public AuthService(
+      SecurityContext securityContext,
+      ServerProperties serverProperties,
+      Repositories repositories) {
     this.securityContext = securityContext;
     this.jwksOperations = new JwksOperations(securityContext);
+    this.serverProperties = serverProperties;
+    this.userRepository = repositories.getUserRepository();
   }
 
   /**
@@ -100,48 +90,48 @@ public class AuthService {
    * the incoming identity (email, subject) matches a specific user in the system, once a user
    * management system is in place.
    *
-   * <p>TODO: This could probably be integrated into the OpenAPI spec.
-   *
-   * @param request The token exchange parameters
+   * @param ext Specifies whether the issued token should be set as a cookie.
+   * @param form The OAuth 2.0 token exchange request form.
    * @return The token exchange response
    */
   @Post("/tokens")
   public HttpResponse grantToken(
-      @Param("ext") Optional<String> ext, OAuthTokenExchangeRequest request) {
-    LOGGER.debug("Got token: {}", request);
-    if (request.getGrantType() == null
-        || !GrantTypes.TOKEN_EXCHANGE.equals(request.getGrantType())) {
+      @Param("ext") Optional<TokenEndpointExtensionType> ext,
+      @RequestConverter(ToOAuthTokenExchangeFormConverter.class) OAuthTokenExchangeForm form) {
+    LOGGER.debug("Got token: {}", form);
+
+    if (GrantType.TOKEN_EXCHANGE != form.getGrantType()) {
       throw new OAuthInvalidRequestException(
-          ErrorCode.INVALID_ARGUMENT, "Unsupported grant type: " + request.getGrantType());
+          ErrorCode.INVALID_ARGUMENT, "Unsupported grant type: " + form.getGrantType());
     }
 
-    if (request.getRequestedTokenType() == null
-        || !TokenTypes.ACCESS.equals(request.getRequestedTokenType())) {
+    if (TokenType.ACCESS_TOKEN != form.getRequestedTokenType()) {
       throw new OAuthInvalidRequestException(
           ErrorCode.INVALID_ARGUMENT,
-          "Unsupported requested token type: " + request.getRequestedTokenType());
+          "Unsupported requested token type: " + form.getRequestedTokenType());
     }
 
-    if (request.getSubjectTokenType() == null) {
+    if (form.getSubjectTokenType() == null) {
       throw new OAuthInvalidRequestException(
           ErrorCode.INVALID_ARGUMENT, "Subject token type is required but was not specified");
     }
 
-    if (request.getActorTokenType() != null) {
+    if (form.getActorTokenType() != null) {
       throw new OAuthInvalidRequestException(
           ErrorCode.INVALID_ARGUMENT, "Actor tokens not currently supported");
     }
 
-    boolean authorizationEnabled = ServerProperties.getInstance().isAuthorizationEnabled();
+    boolean authorizationEnabled = this.serverProperties.isAuthorizationEnabled();
     if (!authorizationEnabled) {
       throw new OAuthInvalidRequestException(
           ErrorCode.INVALID_ARGUMENT, "Authorization is disabled");
     }
 
-    DecodedJWT decodedJWT = JWT.decode(request.getSubjectToken());
-    String issuer = decodedJWT.getClaim("iss").asString();
-    String keyId = decodedJWT.getHeaderClaim("kid").asString();
-    LOGGER.debug("Validating token for issuer: {}", issuer);
+    DecodedJWT decodedJWT = JWT.decode(form.getSubjectToken());
+    String issuer = decodedJWT.getIssuer();
+    String keyId = decodedJWT.getKeyId();
+
+    LOGGER.debug("Validating token for issuer: {} and keyId: {}", issuer, keyId);
 
     JWTVerifier jwtVerifier = jwksOperations.verifierForIssuerAndKey(issuer, keyId);
     decodedJWT = jwtVerifier.verify(decodedJWT);
@@ -151,46 +141,67 @@ public class AuthService {
 
     String accessToken = securityContext.createAccessToken(decodedJWT);
 
-    OAuthTokenExchangeResponse response =
-        OAuthTokenExchangeResponse.builder()
+    OAuthTokenExchangeInfo tokenExchangeInfo =
+        new OAuthTokenExchangeInfo()
             .accessToken(accessToken)
-            .issuedTokenType(TokenTypes.ACCESS)
-            .tokenType(AuthTypes.BEARER)
-            .build();
+            .issuedTokenType(TokenType.ACCESS_TOKEN)
+            .tokenType(AccessTokenType.BEARER);
 
     // Set token as cookie if ext param is set to cookie
     ResponseHeadersBuilder responseHeaders = ResponseHeaders.builder(HttpStatus.OK);
     ext.ifPresent(
         e -> {
-          if (e.equals(COOKIE)) {
+          if (e.equals(TokenEndpointExtensionType.COOKIE)) {
             // Set cookie timeout to 5 days by default if not present in server.properties
             String cookieTimeout =
-                ServerProperties.getInstance().getProperty("server.cookie-timeout", "P5D");
+                this.serverProperties.getProperty("server.cookie-timeout", "P5D");
             Cookie cookie =
-                Cookie.secureBuilder(AuthDecorator.UC_TOKEN_KEY, accessToken)
-                    .path("/")
-                    .maxAge(Duration.parse(cookieTimeout).getSeconds())
-                    .build();
+                createCookie(AuthDecorator.UC_TOKEN_KEY, accessToken, "/", cookieTimeout);
             responseHeaders.add(HttpHeaderNames.SET_COOKIE, cookie.toSetCookieHeader());
           }
         });
 
-    return HttpResponse.ofJson(responseHeaders.build(), response);
+    return HttpResponse.ofJson(responseHeaders.build(), tokenExchangeInfo);
   }
 
-  private static void verifyPrincipal(DecodedJWT decodedJWT) {
+  @Post("/logout")
+  public HttpResponse logout(HttpRequest request) {
+    return request.headers().cookies().stream()
+        .filter(c -> c.name().equals(AuthDecorator.UC_TOKEN_KEY))
+        .findFirst()
+        .map(
+            authorizationCookie -> {
+              Cookie expiredCookie = createCookie(AuthDecorator.UC_TOKEN_KEY, "", "/", "PT0S");
+              ResponseHeaders headers =
+                  ResponseHeaders.builder()
+                      .status(HttpStatus.OK)
+                      .add(HttpHeaderNames.SET_COOKIE, expiredCookie.toSetCookieHeader())
+                      .contentType(MediaType.JSON)
+                      .build();
+              // Armeria requires a non-empty response payload, so an empty JSON is sent
+              return HttpResponse.of(headers, HttpData.ofUtf8(EMPTY_RESPONSE));
+            })
+        .orElse(HttpResponse.of(HttpStatus.OK, MediaType.JSON, EMPTY_RESPONSE));
+  }
+
+  private void verifyPrincipal(DecodedJWT decodedJWT) {
     String subject =
-        decodedJWT.getClaim(JwtClaim.EMAIL.key()).isMissing()
-            ? decodedJWT.getClaim(JwtClaim.SUBJECT.key()).asString()
-            : decodedJWT.getClaim(JwtClaim.EMAIL.key()).asString();
+        decodedJWT
+            .getClaims()
+            .getOrDefault(JwtClaim.EMAIL.key(), decodedJWT.getClaim(JwtClaim.SUBJECT.key()))
+            .asString();
+
+    LOGGER.debug("Validating principal: {}", subject);
 
     if (subject.equals("admin")) {
+      LOGGER.debug("admin always allowed");
       return;
     }
 
     try {
-      User user = USER_REPOSITORY.getUserByEmail(subject);
+      User user = userRepository.getUserByEmail(subject);
       if (user != null && user.getState() == User.StateEnum.ENABLED) {
+        LOGGER.debug("Principal {} is enabled", subject);
         return;
       }
     } catch (Exception e) {
@@ -201,48 +212,49 @@ public class AuthService {
         ErrorCode.INVALID_ARGUMENT, "User not allowed: " + subject);
   }
 
-  // TODO: This should be probably integrated into the OpenAPI spec.
-  @ToString
-  static class OAuthTokenExchangeRequest {
-    @Param(Fields.GRANT_TYPE)
-    @Getter
-    private String grantType;
-
-    @Param(Fields.REQUESTED_TOKEN_TYPE)
-    @Getter
-    private String requestedTokenType;
-
-    @Param(Fields.SUBJECT_TOKEN_TYPE)
-    @Getter
-    private String subjectTokenType;
-
-    @Param(Fields.SUBJECT_TOKEN)
-    @Getter
-    private String subjectToken;
-
-    @Param(Fields.ACTOR_TOKEN_TYPE)
-    @Nullable
-    @Getter
-    private String actorTokenType;
-
-    @Param(Fields.ACTOR_TOKEN)
-    @Nullable
-    @Getter
-    private String actorToken;
+  private Cookie createCookie(String key, String value, String path, String maxAge) {
+    return Cookie.secureBuilder(key, value)
+        .path(path)
+        .maxAge(Duration.parse(maxAge).getSeconds())
+        .build();
   }
 
-  // TODO: This should be probably integrated into the OpenAPI spec.
-  @Jacksonized
-  @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)
-  @JsonInclude(JsonInclude.Include.NON_NULL)
-  @Builder
-  @Getter
-  public static class OAuthTokenExchangeResponse {
-    @NonNull private String accessToken;
-    @NonNull private String issuedTokenType;
-    @NonNull private String tokenType;
-    private Long expiresIn;
-    private String scope;
-    private String refreshToken;
+  // NOTE:
+  // When specifying `application/x-www-form-urlencoded` as the content type in the OpenAPI schema,
+  // the OpenAPI Generator does not create request models from the schema.
+  // Moreover, directly accessing parameters from the body without a model causes issues with
+  // Armeria, particularly when the `ext` query parameter is included.
+  //
+  // To resolve this, instead of redefining a request model solely for Armeria's parameter
+  // injection,
+  // a `RequestConverterFunction` for `OAuthTokenExchangeRequest` is implemented here.
+  // This approach ensures a single model is used across both the `controlApi` and `cli` projects,
+  // preserving the principle of a single source of truth.
+  //
+  // SEE:
+  // - https://armeria.dev/docs/server-annotated-service/#getting-a-query-parameter
+  // - https://armeria.dev/docs/server-annotated-service/#injecting-a-parameter-as-an-enum-type
+  private static class ToOAuthTokenExchangeFormConverter implements RequestConverterFunction {
+    private static final ObjectMapper mapper = new ObjectMapper();
+
+    @Override
+    public Object convertRequest(
+        ServiceRequestContext ctx,
+        AggregatedHttpRequest request,
+        Class<?> expectedResultType,
+        @Nullable ParameterizedType expectedParameterizedResultType) {
+      MediaType contentType = request.contentType();
+      if (expectedResultType == OAuthTokenExchangeForm.class
+          && contentType != null
+          && contentType.belongsTo(MediaType.FORM_DATA)) {
+        Map<String, String> form =
+            QueryParams.fromQueryString(
+                    request.content(contentType.charset(StandardCharsets.UTF_8)))
+                .stream()
+                .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+        return mapper.convertValue(form, OAuthTokenExchangeForm.class);
+      }
+      return RequestConverterFunction.fallthrough();
+    }
   }
 }
