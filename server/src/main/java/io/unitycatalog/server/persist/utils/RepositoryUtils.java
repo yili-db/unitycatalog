@@ -9,7 +9,6 @@ import io.unitycatalog.server.persist.dao.CatalogInfoDAO;
 import io.unitycatalog.server.persist.dao.PropertyDAO;
 import io.unitycatalog.server.persist.dao.SchemaInfoDAO;
 import io.unitycatalog.server.utils.Constants;
-
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.List;
@@ -22,11 +21,9 @@ import org.hibernate.Session;
 public class RepositoryUtils {
 
   private static final Map<String, Class<?>> PROPERTY_TYPE_MAP = new HashMap<>();
-
   static {
     PROPERTY_TYPE_MAP.put(Constants.FUNCTION, String.class);
   }
-
   public static <T> T attachProperties(
       T entityInfo, String uuid, String entityType, Session session) {
     try {
@@ -40,10 +37,9 @@ public class RepositoryUtils {
           entityInfo.getClass().getMethod("setProperties", entityClass);
       Map<String, String> propertyMap = PropertyDAO.toMap(propertyDAOList);
       Object propertiesArgument = switch (entityClass.getSimpleName()) {
-        case "Map" -> propertyMap;
-        case "String" -> propertyMap.toString();
-        default -> throw new IllegalArgumentException(
-            "Unsupported parameter type: " + entityClass.getSimpleName());
+          case "Map" -> propertyMap;
+          case "String" -> propertyMap.toString();
+          default -> throw new IllegalArgumentException("Unsupported parameter type: " + entityClass.getSimpleName());
       };
       setPropertiesMethod.invoke(entityInfo, propertiesArgument);
       return entityInfo;
@@ -64,25 +60,6 @@ public class RepositoryUtils {
   public static String getAssetFullName(
       String catalogName, String schemaName, String assetName) {
     return catalogName + "." + schemaName + "." + assetName;
-  }
-
-  public static UUID getSchemaId(Session session, SchemaRepository schemaRepository,
-      String catalogName,
-      String schemaName) {
-    SchemaInfoDAO schemaInfo = schemaRepository.getSchemaDAO(session, catalogName, schemaName);
-    if (schemaInfo == null) {
-      throw new BaseException(ErrorCode.NOT_FOUND, "Schema not found: " + schemaName);
-    }
-    return schemaInfo.getId();
-  }
-
-  public static UUID getCatalogId(Session session, CatalogRepository catalogRepository,
-      String catalogName) {
-    CatalogInfoDAO catalogInfo = catalogRepository.getCatalogDAO(session, catalogName);
-    if (catalogInfo == null) {
-      throw new BaseException(ErrorCode.NOT_FOUND, "Catalog not found: " + catalogName);
-    }
-    return catalogInfo.getId();
   }
 
   public static SchemaInfoDAO getSchemaByIdOrThrow(Session session, UUID schemaId) {

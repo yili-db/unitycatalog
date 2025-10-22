@@ -1,7 +1,6 @@
 package io.unitycatalog.server.persist;
 
 import io.unitycatalog.server.persist.utils.FileOperations;
-import io.unitycatalog.server.service.credential.CloudCredentialVendor;
 import io.unitycatalog.server.utils.ServerProperties;
 import lombok.Getter;
 import org.hibernate.SessionFactory;
@@ -12,7 +11,6 @@ import org.hibernate.SessionFactory;
  */
 @Getter
 public class Repositories {
-
   private final SessionFactory sessionFactory;
   private final FileOperations fileOperations;
 
@@ -28,12 +26,9 @@ public class Repositories {
   private final CredentialRepository credentialRepository;
   private final ExternalLocationRepository externalLocationRepository;
 
-  public Repositories(
-      SessionFactory sessionFactory,
-      CloudCredentialVendor cloudCredentialVendor,
-      ServerProperties serverProperties) {
+  public Repositories(SessionFactory sessionFactory, ServerProperties serverProperties) {
     this.sessionFactory = sessionFactory;
-    this.fileOperations = new FileOperations(cloudCredentialVendor, serverProperties);
+    this.fileOperations = new FileOperations(serverProperties);
 
     this.catalogRepository = new CatalogRepository(this, sessionFactory);
     this.schemaRepository = new SchemaRepository(this, sessionFactory);

@@ -73,7 +73,7 @@ public class KeyMapper {
         schemaName = table.getSchemaName();
         tableId = table.getTableId();
       } catch (BaseException e) {
-        if (!isTableName && e.getErrorCode().equals(ErrorCode.NOT_FOUND)) {
+        if (!isTableName && e.getErrorCode() == ErrorCode.NOT_FOUND) {
           // Check if this is actually a request for staging table. Staging tables are only
           // addressed via their IDs.
           StagingTableInfo stagingTable = stagingTableRepository.getStagingTableById(fullName);

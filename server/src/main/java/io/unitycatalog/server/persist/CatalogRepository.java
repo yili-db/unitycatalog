@@ -11,10 +11,7 @@ import io.unitycatalog.server.persist.utils.TransactionManager;
 import io.unitycatalog.server.utils.Constants;
 import io.unitycatalog.server.utils.IdentityUtils;
 import io.unitycatalog.server.utils.ValidationUtils;
-import java.util.ArrayList;
-import java.util.Date;
-import java.util.List;
-import java.util.Optional;
+import java.util.*;
 import org.hibernate.Session;
 import org.hibernate.SessionFactory;
 import org.hibernate.query.Query;
@@ -120,6 +117,14 @@ public class CatalogRepository {
     query.setParameter("value", name);
     query.setMaxResults(1);
     return query.uniqueResult();
+  }
+
+  public UUID getCatalogId(Session session, String catalogName) {
+    CatalogInfoDAO catalogInfo = getCatalogDAO(session, catalogName);
+    if (catalogInfo == null) {
+      throw new BaseException(ErrorCode.NOT_FOUND, "Catalog not found: " + catalogName);
+    }
+    return catalogInfo.getId();
   }
 
   public CatalogInfo updateCatalog(String name, UpdateCatalog updateCatalog) {

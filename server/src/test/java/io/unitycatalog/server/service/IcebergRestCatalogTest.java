@@ -249,7 +249,7 @@ public class IcebergRestCatalogTest extends BaseServerTest {
       String metadataLocation =
           Objects.requireNonNull(this.getClass().getResource("/iceberg.metadata.json"))
               .toURI()
-              .getPath();
+              .toString();
       tableInfoDAO.setUniformIcebergMetadataLocation(metadataLocation);
       session.merge(tableInfoDAO);
       tx.commit();

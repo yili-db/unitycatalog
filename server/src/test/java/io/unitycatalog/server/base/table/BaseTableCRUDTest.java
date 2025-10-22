@@ -172,12 +172,13 @@ public abstract class BaseTableCRUDTest extends BaseCRUDTest {
             .comment(TestUtils.COMMENT)
             .tableType(TableType.MANAGED)
             .dataSourceFormat(DataSourceFormat.DELTA);
-    TableInfo tableInfo = tableOperations.createTable(createTableRequest);
+    tableOperations.createTable(createTableRequest);
 
     TableInfo managedTable = tableOperations.getTable(TestUtils.TABLE_FULL_NAME);
     assertThat(managedTable.getName()).isEqualTo(TestUtils.TABLE_NAME);
     assertThat(managedTable.getCatalogName()).isEqualTo(TestUtils.CATALOG_NAME);
     assertThat(managedTable.getSchemaName()).isEqualTo(TestUtils.SCHEMA_NAME);
+    // yili Fix this
     assertThat(managedTable.getStorageLocation())
         .isEqualTo(FileOperations.convertRelativePathToURI("/tmp/managedStagingLocation"));
     assertThat(managedTable.getTableType()).isEqualTo(TableType.MANAGED);

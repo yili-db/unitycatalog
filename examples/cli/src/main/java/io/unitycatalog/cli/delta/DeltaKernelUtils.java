@@ -71,14 +71,10 @@ public class DeltaKernelUtils {
   public static Configuration getHDFSConfiguration(
       URI tablePathUri, TemporaryCredentials temporaryCredentials) {
     Configuration conf = new Configuration();
-
     String scheme = tablePathUri.getScheme();
     if (scheme == null) {
       throw new IllegalArgumentException("URI scheme is missing");
     }
-
-    System.out.println(temporaryCredentials);
-
     switch (scheme) {
       case "s3":
       case "s3a":
@@ -142,7 +138,6 @@ public class DeltaKernelUtils {
       default:
         throw new IllegalArgumentException("Unsupported URI scheme: " + scheme);
     }
-
     return conf;
   }
 

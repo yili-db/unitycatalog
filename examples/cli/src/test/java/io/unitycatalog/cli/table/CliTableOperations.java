@@ -30,6 +30,7 @@ public class CliTableOperations implements TableOperations {
       columns.append(column.getName()).append(" ").append(column.getTypeName().name()).append(",");
     }
     columns.deleteCharAt(columns.length() - 1);
+
     List<String> argsList = new ArrayList<>();
     argsList.addAll(
         List.of(

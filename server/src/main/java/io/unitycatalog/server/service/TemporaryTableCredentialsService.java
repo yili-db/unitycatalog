@@ -11,10 +11,8 @@ import io.unitycatalog.server.exception.ErrorCode;
 import io.unitycatalog.server.exception.GlobalExceptionHandler;
 import io.unitycatalog.server.model.GenerateTemporaryTableCredential;
 import io.unitycatalog.server.model.SecurableType;
-import io.unitycatalog.server.model.TableInfo;
 import io.unitycatalog.server.model.TableOperation;
 import io.unitycatalog.server.persist.Repositories;
-import io.unitycatalog.server.persist.StagingTableRepository;
 import io.unitycatalog.server.persist.TableRepository;
 import io.unitycatalog.server.persist.UserRepository;
 import io.unitycatalog.server.service.credential.CredentialContext;
@@ -51,9 +49,11 @@ public class TemporaryTableCredentialsService {
   @Post("")
   public HttpResponse generateTemporaryTableCredential(GenerateTemporaryTableCredential generateTemporaryTableCredential) {
     authorizeForOperation(generateTemporaryTableCredential);
-    String storageLocation = tableRepository.tryAndGetStorageLocationForTable(generateTemporaryTableCredential.getTableId());
+
+    String tableId = generateTemporaryTableCredential.getTableId();
+    String storageLocation = tableRepository.getStorageLocationForTableOrStagingTable(tableId);
     return HttpResponse.ofJson(cloudCredentialVendor.vendCredential(storageLocation,
-                    tableOperationToPrivileges(generateTemporaryTableCredential.getOperation())));
+        tableOperationToPrivileges(generateTemporaryTableCredential.getOperation())));
   }
 
   private Set<CredentialContext.Privilege> tableOperationToPrivileges(TableOperation tableOperation) {
@@ -90,4 +90,5 @@ public class TemporaryTableCredentialsService {
       throw new BaseException(ErrorCode.PERMISSION_DENIED, "Access denied.");
     }
   }
+
 }

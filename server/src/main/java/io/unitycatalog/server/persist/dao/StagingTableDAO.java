@@ -12,37 +12,35 @@ import lombok.experimental.SuperBuilder;
 @Table(
     name = "uc_staging_tables",
     indexes = {
-      @Index(name = "staging_table_name_idx", columnList = "name"),
-      @Index(name = "staging_table_storage_location_idx", columnList = "staging_location"),
+      @Index(name = "idx_name", columnList = "name"),
+      @Index(name = "idx_staging_location", columnList = "staging_location"),
     })
 // Lombok annotations
 @Getter
 @Setter
 @NoArgsConstructor
 @AllArgsConstructor
-@SuperBuilder
 @EqualsAndHashCode(callSuper = true)
+@SuperBuilder
 public class StagingTableDAO extends IdentifiableDAO {
-
-  @Column(name = "schema_id", columnDefinition = "BINARY(16)")
+  @Column(name = "schema_id")
   private UUID schemaId;
 
-  @Lob
-  @Column(name = "staging_location", nullable = false)
+  @Column(name = "staging_location", length = 2048, nullable = false)
   private String stagingLocation;
 
-  @Temporal(TemporalType.TIMESTAMP)
   @Column(name = "created_at", nullable = false)
   private Date createdAt;
 
-  @Temporal(TemporalType.TIMESTAMP)
+  @Column(name = "created_by")
+  private String createdBy;
+
   @Column(name = "accessed_at", nullable = false)
   private Date accessedAt;
 
   @Column(name = "stage_committed", nullable = false)
   private boolean stageCommitted;
 
-  @Temporal(TemporalType.TIMESTAMP)
   @Column(name = "stage_committed_at")
   private Date stageCommittedAt;
 
@@ -56,17 +54,19 @@ public class StagingTableDAO extends IdentifiableDAO {
   @Column(name = "last_cleanup_at")
   private Date lastCleanupAt;
 
-  public StagingTableInfo toStagingTableInfo() {
-    // TODO: populate metastore ID
+  public StagingTableInfo toStagingTableInfo(String catalogName, String schemaName) {
     return new StagingTableInfo()
         .id(getId().toString())
         .stagingLocation(getStagingLocation())
-        .name(getName());
+        .name(getName())
+        .catalogName(catalogName)
+        .schemaName(schemaName);
   }
 
   public void setDefaultFields() {
-    setCreatedAt(new Date()); // Assuming current date for creation
-    setAccessedAt(new Date()); // Assuming current date for last access
+    Date now = new Date();
+    setCreatedAt(now); // Assuming current date for creation
+    setAccessedAt(now); // Assuming current date for last access
     setStageCommitted(false);
     setStageCommittedAt(null);
     setPurgeState((short) 0);

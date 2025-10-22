@@ -15,9 +15,6 @@ import io.unitycatalog.client.ApiException;
 import io.unitycatalog.client.api.TablesApi;
 import io.unitycatalog.client.api.TemporaryCredentialsApi;
 import io.unitycatalog.client.model.*;
-import java.net.URI;
-import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.List;
 import org.apache.commons.cli.CommandLine;
 import org.json.JSONException;
@@ -108,8 +105,8 @@ public class TableCli {
         throw new CliException("Storage location is not allowed for managed tables");
       }
       // Create staging table if format is delta
-      if (DataSourceFormat.DELTA.name().equals(format.toUpperCase())) {
-        throw new CliException("Only delta tables are supported for managed tables");
+      if (!DataSourceFormat.DELTA.name().equals(format.toUpperCase())) {
+        throw new CliException("Only delta tables are supported for managed tables: " + format);
       }
       CreateStagingTable createStagingTable =
           new CreateStagingTable()
@@ -137,13 +134,27 @@ public class TableCli {
     return objectWriter.writeValueAsString(tableInfo);
   }
 
-  private static Path getLocalPath(String path) {
-    if (path.startsWith("file:")) {
-      return Paths.get(URI.create(path));
-    } else {
-      return Paths.get(path);
-    }
-  }
+  //  private static Path getLocalPath(String path) {
+  //    if (path.startsWith("file:")) {
+  //      return Paths.get(URI.create(path));
+  //    } else {
+  //      return Paths.get(path);
+  //    }
+  //  }
+  //
+  //  private static String handleTableStorageLocation(String storageLocation) {
+  //    if (!(storageLocation.startsWith("abfs://")
+  //        ||storageLocation.startsWith("abfss://")
+  //        ||storageLocation.startsWith("gs://")
+  //        ||storageLocation.startsWith("s3://")
+  //        || storageLocation.startsWith("file:/")
+  //        || storageLocation.startsWith("/"))) {
+  //      throw new CliException(
+  //          "Storage location must start with s3:// etc or file:/ or be an absolute local
+  // filesystem path.");
+  //    }
+  //    return storageLocation;
+  //  }
 
   private static String listTables(TablesApi tablesApi, JSONObject json)
       throws JsonProcessingException, ApiException {

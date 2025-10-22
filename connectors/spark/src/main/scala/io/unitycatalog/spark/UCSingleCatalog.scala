@@ -1,7 +1,5 @@
 package io.unitycatalog.spark
 
-import com.fasterxml.jackson.databind.ObjectMapper
-import com.fasterxml.jackson.module.scala.{DefaultScalaModule, ScalaObjectMapper}
 import io.unitycatalog.client.{ApiClient, ApiException}
 import io.unitycatalog.client.api.{SchemasApi, TablesApi, TemporaryCredentialsApi}
 import io.unitycatalog.client.model.{ColumnInfo, ColumnTypeName, CreateSchema, CreateTable, DataSourceFormat, GenerateTemporaryPathCredential, GenerateTemporaryTableCredential, ListTablesResponse, PathOperation, SchemaInfo, TableOperation, TableType, TemporaryCredentials}
@@ -10,7 +8,6 @@ import io.unitycatalog.spark.utils.OptionsUtil
 
 import java.net.URI
 import java.util
-import java.util.{HashMap => JMap}
 import org.apache.hadoop.fs.Path
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.TableIdentifier
@@ -31,15 +28,14 @@ import scala.language.existentials
  */
 class UCSingleCatalog
   extends TableCatalog
-    with SupportsNamespaces
-    with Logging {
+  with SupportsNamespaces
+  with Logging {
 
   private[this] var uri: URI = null
   private[this] var token: String = null
   private[this] var renewCredEnabled: Boolean = false
   private[this] var apiClient: ApiClient = null;
   private[this] var temporaryCredentialsApi: TemporaryCredentialsApi = null
-  private[this] var tablesApi: TablesApi = null
 
   @volatile private var delegate: TableCatalog = null
 
@@ -55,9 +51,7 @@ class UCSingleCatalog
 
     apiClient = ApiClientFactory.createApiClient(uri, token)
     temporaryCredentialsApi = new TemporaryCredentialsApi(apiClient)
-    tablesApi = new TablesApi(apiClient)
-    val proxy = new UCProxy(uri, token, renewCredEnabled, apiClient, tablesApi,
-      temporaryCredentialsApi)
+    val proxy = new UCProxy(uri, token, renewCredEnabled, apiClient, temporaryCredentialsApi)
     proxy.initialize(name, options)
     if (UCSingleCatalog.LOAD_DELTA_CATALOG.get()) {
       try {
@@ -81,59 +75,43 @@ class UCSingleCatalog
 
   override def loadTable(ident: Identifier): Table = delegate.loadTable(ident)
 
-  override def loadTable(ident: Identifier, version: String): Table = delegate.loadTable(ident, version)
+  override def loadTable(ident: Identifier, version:  String): Table = delegate.loadTable(ident, version)
 
-  override def loadTable(ident: Identifier, timestamp: Long): Table = delegate.loadTable(ident, timestamp)
+  override def loadTable(ident: Identifier, timestamp:  Long): Table = delegate.loadTable(ident, timestamp)
 
   override def tableExists(ident: Identifier): Boolean = {
     delegate.tableExists(ident)
   }
 
   override def createTable(
-                            ident: Identifier,
-                            columns: Array[Column],
-                            partitions: Array[Transform],
-                            properties: util.Map[String, String]): Table = {
+      ident: Identifier,
+      columns: Array[Column],
+      partitions: Array[Transform],
+      properties: util.Map[String, String]): Table = {
     val hasExternalClause = properties.containsKey(TableCatalog.PROP_EXTERNAL)
     val hasLocationClause = properties.containsKey(TableCatalog.PROP_LOCATION)
     if (hasExternalClause && !hasLocationClause) {
       throw new ApiException("Cannot create EXTERNAL TABLE without location.")
     }
-
     def isPathTable = ident.namespace().length == 1 && new Path(ident.name()).isAbsolute
     // If both EXTERNAL and LOCATION are not specified in the CREATE TABLE command, and the table is
     // not a path table like parquet.`/file/path`, we generate the UC-managed table location here.
     if (!hasExternalClause && !hasLocationClause && !isPathTable) {
-      val newProps = new JMap[String, String]
+      val newProps = new util.HashMap[String, String]
       newProps.putAll(properties)
-      val createStagingTable = new CreateStagingTable()
-      createStagingTable.setName(ident.name())
-      createStagingTable.setSchemaName(ident.namespace().head)
-      createStagingTable.setCatalogName(name())
-      val stagingTableInfo = tablesApi.createStagingTable(createStagingTable)
-      newProps.put(TableCatalog.PROP_LOCATION, stagingTableInfo.getStagingLocation)
+      // TODO: here we use a fake location for managed table, we should generate table location
+      //       properly when Unity Catalog supports creating managed table.
+      newProps.put(TableCatalog.PROP_LOCATION, properties.get("__FAKE_PATH__"))
       // `PROP_IS_MANAGED_LOCATION` is used to indicate that the table location is not
       // user-specified but system-generated, which is exactly the case here.
       newProps.put(TableCatalog.PROP_IS_MANAGED_LOCATION, "true")
-      val temporaryCredentials = temporaryCredentialsApi.generateTemporaryTableCredentials(
-        new GenerateTemporaryTableCredential()
-          .tableId(stagingTableInfo.getId)
-          .operation(TableOperation.READ_WRITE)
-      )
-      UCSingleCatalog.setCredentialProps(newProps, temporaryCredentials, stagingTableInfo.getStagingLocation)
-      // Add coordinated commits properties
-
-      newProps.put("delta.coordinatedCommits.tableConf-preview",
-        JsonUtils.toJson(Map("ucTableId" -> stagingTableInfo.getId)))
-      newProps.put("delta.coordinatedCommits.commitCoordinatorConf-preview",
-        JsonUtils.toJson(Map("ucMetastoreId" -> new MetastoresApi(apiClient).summary().getMetastoreId)))
-      newProps.put("delta.coordinatedCommits.commitCoordinator-preview",
-        "org.apache.spark.sql.delta.coordinatedcommits.UCCommitCoordinatorBuilder")
       delegate.createTable(ident, columns, partitions, newProps)
     } else if (hasLocationClause) {
       val location = properties.get(TableCatalog.PROP_LOCATION)
       assert(location != null)
-      val newProps = new JMap[String, String]
+      val cred = temporaryCredentialsApi.generateTemporaryPathCredentials(
+        new GenerateTemporaryPathCredential().url(location).operation(PathOperation.PATH_CREATE_TABLE))
+      val newProps = new util.HashMap[String, String]
       newProps.putAll(properties)
 
       val credentialProps = CredPropsUtil.createPathCredProps(
@@ -199,15 +177,6 @@ class UCSingleCatalog
   }
 }
 
-object JsonUtils {
-  private val mapper = new ObjectMapper() with ScalaObjectMapper
-  mapper.registerModule(DefaultScalaModule)
-
-  def toJson(map: Map[String, Any]): String = {
-    mapper.writeValueAsString(map)
-  }
-}
-
 object UCSingleCatalog {
   val LOAD_DELTA_CATALOG = ThreadLocal.withInitial[Boolean](() => true)
   val DELTA_CATALOG_LOADED = ThreadLocal.withInitial[Boolean](() => false)
@@ -218,14 +187,15 @@ private class UCProxy(
     uri: URI,
     token: String,
     renewCredEnabled: Boolean,
-                       apiClient: ApiClient,
-                       tablesApi: TablesApi,
-                       temporaryCredentialsApi: TemporaryCredentialsApi) extends TableCatalog with SupportsNamespaces {
+    apiClient: ApiClient,
+    temporaryCredentialsApi: TemporaryCredentialsApi) extends TableCatalog with SupportsNamespaces {
   private[this] var name: String = null
+  private[this] var tablesApi: TablesApi = null
   private[this] var schemasApi: SchemasApi = null
 
   override def initialize(name: String, options: CaseInsensitiveStringMap): Unit = {
     this.name = name
+    tablesApi = new TablesApi(apiClient)
     schemasApi = new SchemasApi(apiClient)
   }
 
@@ -332,17 +302,14 @@ private class UCProxy(
     val hasExternalClause = properties.containsKey(TableCatalog.PROP_EXTERNAL)
     val storageLocation = properties.get(TableCatalog.PROP_LOCATION)
     assert(storageLocation != null, "location should either be user specified or system generated.")
-    val isManagedLocation = Option(properties.get(TableCatalog.PROP_IS_MANAGED_LOCATION)).exists(_.toBoolean)
-    val format = properties.get("provider")
+    val isManagedLocation = Option(properties.get(TableCatalog.PROP_IS_MANAGED_LOCATION))
+      .exists(_.equalsIgnoreCase("true"))
     if (isManagedLocation) {
       assert(!hasExternalClause, "location is only generated for managed tables.")
-      if (!format.equalsIgnoreCase(DataSourceFormat.DELTA.name)) {
-        throw new ApiException("Unity Catalog does not support non-delta managed table.")
-      }
-      createTable.setTableType(TableType.MANAGED)
-    } else {
-      createTable.setTableType(TableType.EXTERNAL)
+      // TODO: Unity Catalog does not support managed tables now.
+      throw new ApiException("Unity Catalog does not support managed table.")
     }
+    createTable.setTableType(TableType.EXTERNAL)
     createTable.setStorageLocation(storageLocation)
 
     val columns: Seq[ColumnInfo] = schema.fields.toSeq.zipWithIndex.map { case (field, i) =>
@@ -359,6 +326,7 @@ private class UCProxy(
       column
     }
     createTable.setColumns(columns)
+    val format: String = properties.get("provider")
     createTable.setDataSourceFormat(convertDatasourceFormat(format))
     tablesApi.createTable(createTable)
     loadTable(ident)
@@ -435,22 +403,14 @@ private class UCProxy(
     }
     // flatten the schema properties to a map, with the key prefixed by "properties:"
     val metadata = schema.getProperties.asScala.map {
-      case (k, v) => SchemaInfo.JSON_PROPERTY_PROPERTIES + ":" + k -> v
+      case (k, v) =>  SchemaInfo.JSON_PROPERTY_PROPERTIES + ":" + k -> v
     }
     metadata(SchemaInfo.JSON_PROPERTY_NAME) = schema.getName
     metadata(SchemaInfo.JSON_PROPERTY_CATALOG_NAME) = schema.getCatalogName
     metadata(SchemaInfo.JSON_PROPERTY_COMMENT) = schema.getComment
     metadata(SchemaInfo.JSON_PROPERTY_FULL_NAME) = schema.getFullName
-    metadata(SchemaInfo.JSON_PROPERTY_CREATED_AT) = if (schema.getCreatedAt != null) {
-      schema.getCreatedAt.toString
-    } else {
-      "null"
-    }
-    metadata(SchemaInfo.JSON_PROPERTY_UPDATED_AT) = if (schema.getUpdatedAt != null) {
-      schema.getUpdatedAt.toString
-    } else {
-      "null"
-    }
+    metadata(SchemaInfo.JSON_PROPERTY_CREATED_AT) = if (schema.getCreatedAt != null) {schema.getCreatedAt.toString} else {"null"}
+    metadata(SchemaInfo.JSON_PROPERTY_UPDATED_AT) = if (schema.getUpdatedAt != null) {schema.getUpdatedAt.toString} else {"null"}
     metadata(SchemaInfo.JSON_PROPERTY_SCHEMA_ID) = schema.getSchemaId
     metadata.asJava
   }

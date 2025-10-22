@@ -69,7 +69,7 @@ public class TableInfoDAO extends IdentifiableDAO {
   @Column(name = "uniform_iceberg_metadata_location", length = 65535)
   private String uniformIcebergMetadataLocation;
 
-  public static TableInfoDAO from(TableInfo tableInfo) {
+  public static TableInfoDAO from(TableInfo tableInfo, UUID schemaId) {
     return TableInfoDAO.builder()
         .id(UUID.fromString(tableInfo.getTableId()))
         .name(tableInfo.getName())
@@ -86,6 +86,7 @@ public class TableInfoDAO extends IdentifiableDAO {
         .dataSourceFormat(tableInfo.getDataSourceFormat().toString())
         .url(tableInfo.getStorageLocation())
         .columns(ColumnInfoDAO.fromList(tableInfo.getColumns()))
+        .schemaId(schemaId)
         .build();
   }
 
@@ -96,7 +97,7 @@ public class TableInfoDAO extends IdentifiableDAO {
             .name(getName())
             .tableType(TableType.valueOf(type))
             .dataSourceFormat(DataSourceFormat.valueOf(dataSourceFormat))
-            .storageLocation(FileOperations.toStandardizedURIString(url))
+            .storageLocation(FileOperations.convertRelativePathToURI(url))
             .comment(comment)
             .owner(owner)
             .createdAt(createdAt != null ? createdAt.getTime() : null)

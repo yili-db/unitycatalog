@@ -107,10 +107,7 @@ public class UnityCatalogServer {
         new HibernateConfigurator(unityCatalogServerBuilder.serverProperties);
     // Init all repositories
     Repositories repositories =
-        new Repositories(
-            hibernateConfigurator.getSessionFactory(),
-            unityCatalogServerBuilder.cloudCredentialVendor,
-            serverProperties);
+        new Repositories(hibernateConfigurator.getSessionFactory(), serverProperties);
     // Init metastore
     repositories.getMetastoreRepository().initMetastoreIfNeeded();
     // Init authorizer

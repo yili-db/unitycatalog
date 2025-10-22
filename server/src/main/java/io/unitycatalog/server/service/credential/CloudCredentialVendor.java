@@ -50,25 +50,27 @@ public class CloudCredentialVendor {
 
     String storageScheme = context.getStorageScheme();
     TemporaryCredentials temporaryCredentials = new TemporaryCredentials();
-    if (storageScheme != null) {
 
-    switch (storageScheme) {
+    if (storageScheme != null) {
+      switch (storageScheme) {
         case URI_SCHEME_ABFS, URI_SCHEME_ABFSS -> {
           AzureCredential azureCredential = vendAzureCredential(context);
-          temporaryCredentials.azureUserDelegationSas(new AzureUserDelegationSAS().sasToken(azureCredential.getSasToken()))
-                  .expirationTime(azureCredential.getExpirationTimeInEpochMillis());
+          temporaryCredentials.azureUserDelegationSas(
+                  new AzureUserDelegationSAS().sasToken(azureCredential.getSasToken()))
+              .expirationTime(azureCredential.getExpirationTimeInEpochMillis());
         }
         case URI_SCHEME_GS -> {
           AccessToken gcpToken = vendGcpToken(context);
-          temporaryCredentials.gcpOauthToken(new GcpOauthToken().oauthToken(gcpToken.getTokenValue()))
-                  .expirationTime(gcpToken.getExpirationTime().getTime());
+          temporaryCredentials.gcpOauthToken(
+                  new GcpOauthToken().oauthToken(gcpToken.getTokenValue()))
+              .expirationTime(gcpToken.getExpirationTime().getTime());
         }
         case URI_SCHEME_S3 -> {
           Credentials awsSessionCredentials = vendAwsCredential(context);
           temporaryCredentials.awsTempCredentials(new AwsCredentials()
-                  .accessKeyId(awsSessionCredentials.accessKeyId())
-                  .secretAccessKey(awsSessionCredentials.secretAccessKey())
-                  .sessionToken(awsSessionCredentials.sessionToken()));
+              .accessKeyId(awsSessionCredentials.accessKeyId())
+              .secretAccessKey(awsSessionCredentials.secretAccessKey())
+              .sessionToken(awsSessionCredentials.sessionToken()));
         }
       }
     }
