@@ -96,7 +96,7 @@ public class TableInfoDAO extends IdentifiableDAO {
             .name(getName())
             .tableType(TableType.valueOf(type))
             .dataSourceFormat(DataSourceFormat.valueOf(dataSourceFormat))
-            .storageLocation(FileOperations.convertRelativePathToURI(url))
+            .storageLocation(FileOperations.toStandardizedURIString(url))
             .comment(comment)
             .owner(owner)
             .createdAt(createdAt != null ? createdAt.getTime() : null)

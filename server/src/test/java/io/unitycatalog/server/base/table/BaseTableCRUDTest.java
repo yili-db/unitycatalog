@@ -9,8 +9,6 @@ import io.unitycatalog.client.model.*;
 import io.unitycatalog.server.base.BaseCRUDTest;
 import io.unitycatalog.server.base.ServerConfig;
 import io.unitycatalog.server.base.schema.SchemaOperations;
-import io.unitycatalog.server.persist.dao.ColumnInfoDAO;
-import io.unitycatalog.server.persist.dao.TableInfoDAO;
 import io.unitycatalog.server.persist.utils.FileOperations;
 import io.unitycatalog.server.utils.TestUtils;
 import java.io.IOException;

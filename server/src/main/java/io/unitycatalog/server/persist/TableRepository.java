@@ -27,8 +27,6 @@ public class TableRepository {
   private static final Logger LOGGER = LoggerFactory.getLogger(TableRepository.class);
   private final SessionFactory sessionFactory;
   private final Repositories repositories;
-  private static final StagingTableRepository STAGING_TABLE_REPOSITORY =
-      StagingTableRepository.getInstance();
   private final FileOperations fileOperations;
   private static final PagedListingHelper<TableInfoDAO> LISTING_HELPER =
       new PagedListingHelper<>(TableInfoDAO.class);
@@ -40,7 +38,7 @@ public class TableRepository {
   }
 
   public String tryAndGetStorageLocationForTable(String tableId) {
-    try (Session session = SESSION_FACTORY.openSession()) {
+    try (Session session = sessionFactory.openSession()) {
       session.setDefaultReadOnly(true);
       TableInfoDAO tableInfoDAO = session.get(TableInfoDAO.class, UUID.fromString(tableId));
       if (tableInfoDAO != null) {
@@ -142,7 +140,7 @@ public class TableRepository {
             .dataSourceFormat(createTable.getDataSourceFormat())
             .columns(columnInfos)
             .storageLocation(
-                FileOperations.convertRelativePathToURI(createTable.getStorageLocation()))
+                FileOperations.toStandardizedURIString(createTable.getStorageLocation()))
             .comment(createTable.getComment())
             .properties(createTable.getProperties())
             .owner(callerId)
@@ -179,12 +177,14 @@ public class TableRepository {
           case MANAGED -> {
             if (tableInfo.getDataSourceFormat() == DataSourceFormat.DELTA) {
               // Find and commit staging table with the same staging location
-              StagingTableDAO stagingTableDAO = STAGING_TABLE_REPOSITORY.commitStagingTable(session, tableInfo.getStorageLocation());
+              StagingTableDAO stagingTableDAO = repositories.getStagingTableRepository()
+                  .commitStagingTable(session,
+                      tableInfo.getStorageLocation());
               tableId = stagingTableDAO.getId().toString();
               tableInfoDAO.setUrl(tableInfo.getStorageLocation());
             } else {
               // creating a new table location and setting that as the url
-              String tableLocation = FileUtils.createTableDirectory(tableId);
+              String tableLocation = fileOperations.createTableDirectory(tableId);
               // set location in both tableInfo and tableInfoDAO
               tableInfoDAO.setUrl(tableLocation);
               tableInfo.setStorageLocation(tableLocation);

@@ -2,33 +2,31 @@ package io.unitycatalog.server.persist.utils;
 
 import io.unitycatalog.server.exception.BaseException;
 import io.unitycatalog.server.exception.ErrorCode;
-import io.unitycatalog.server.service.credential.CredentialOperations;
+import io.unitycatalog.server.service.credential.CloudCredentialVendor;
 import io.unitycatalog.server.service.iceberg.FileIOFactory;
 import io.unitycatalog.server.utils.Constants;
 import io.unitycatalog.server.utils.ServerProperties;
 import io.unitycatalog.server.utils.ServerProperties.Property;
-import java.io.ByteArrayInputStream;
-import java.io.IOException;
 import java.net.URI;
-import java.nio.file.FileVisitOption;
-import java.nio.file.Files;
-import java.nio.file.Path;
+import java.net.URISyntaxException;
 import java.nio.file.Paths;
-import java.util.Comparator;
-import java.util.stream.Stream;
+import java.util.Objects;
+import org.apache.iceberg.io.FileIO;
+import org.apache.iceberg.io.InputFile;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 public class FileOperations {
   private static final Logger LOGGER = LoggerFactory.getLogger(FileOperations.class);
   private final ServerProperties serverProperties;
-  private static final CredentialOperations credentialOps = new CredentialOperations();
-  private static final FileIOFactory fileIOFactory = new FileIOFactory(credentialOps);
+  private final FileIOFactory fileIOFactory;
   private static String modelStorageRootCached;
   private static String modelStorageRootPropertyCached;
 
-  public FileOperations(ServerProperties serverProperties) {
+  public FileOperations(CloudCredentialVendor cloudCredentialVendor,
+      ServerProperties serverProperties) {
     this.serverProperties = serverProperties;
+    this.fileIOFactory = new FileIOFactory(cloudCredentialVendor, serverProperties);
   }
 
   /**
@@ -44,47 +42,7 @@ public class FileOperations {
   // Model specific storage root handlers and convenience methods
   private String getModelStorageRoot() {
     String currentModelStorageRoot = serverProperties.get(Property.MODEL_STORAGE_ROOT);
-    if (modelStorageRootPropertyCached != currentModelStorageRoot) {
-      // This means the property has been updated from the previous read, or this is the first time
-      // reading it
-      reset();
-    }
-    if (modelStorageRootCached != null) {
-      return modelStorageRootCached;
-    }
-    String modelStorageRoot = currentModelStorageRoot;
-    if (modelStorageRoot == null) {
-      // If the model storage root is empty, use the CWD
-      modelStorageRoot = System.getProperty("user.dir");
-    }
-    // If the model storage root is not a valid URI, make it one
-    if (!UriUtils.isValidURI(modelStorageRoot)) {
-      // Convert to an absolute path
-      modelStorageRoot = Paths.get(modelStorageRoot).toUri().toString();
-    }
-    // Check if the modelStorageRoot ends with a slash and remove it if it does
-    while (modelStorageRoot.endsWith("/")) {
-      modelStorageRoot = modelStorageRoot.substring(0, modelStorageRoot.length() - 1);
-    }
-    modelStorageRootCached = modelStorageRoot;
-    modelStorageRootPropertyCached = currentModelStorageRoot;
-    return modelStorageRoot;
-  }
-
-  /**
-   * TODO: Deprecate this method once unit tests are self contained and this class gets
-   * re-instantiated with each test. Property updates shouldn't affect the instantiated class and we
-   * should require a server restart if the properties file is updated.
-   */
-  private static void reset() {
-    modelStorageRootPropertyCached = null;
-    modelStorageRootCached = null;
-  }
-
-  // Model specific storage root handlers and convenience methods
-  private String getModelStorageRoot() {
-    String currentModelStorageRoot = serverProperties.get(Property.MODEL_STORAGE_ROOT);
-    if (modelStorageRootPropertyCached != currentModelStorageRoot) {
+    if (!Objects.equals(modelStorageRootPropertyCached, currentModelStorageRoot)) {
       // This means the property has been updated from the previous read, or this is the first time
       // reading it
       reset();
@@ -125,47 +83,37 @@ public class FileOperations {
         catalogId + "." + schemaId + ".models." + modelId + ".versions." + versionId);
   }
 
-  public static String createVolumeDirectory(String volumeName) {
-    String absoluteUri = getDirectoryURI(volumeName);
-    return createDirectory(absoluteUri).toString();
-    }
+  private String getStorageRoot() {
+    // Use local tmp directory as default storage root
+    return serverProperties.getProperty("storageRoot", "file:/tmp");
+  }
 
-  public static String createTableDirectory(String tableId) {
+  public String createTableDirectory(String tableId) {
     String directoryUriString = toStandardizedURIString(getStorageRoot() + "/tables/" + tableId);
     URI directoryUri = URI.create(directoryUriString);
+    return createDirectory(directoryUri).toString();
+  }
+
+  public URI createDirectory(URI directoryUri) {
     validateURI(directoryUri);
     FileIO fileIO = fileIOFactory.getFileIO(directoryUri);
     if (fileExists(fileIO, directoryUri)) {
       throw new BaseException(ErrorCode.ALREADY_EXISTS, "Table directory already exists: " + directoryUri);
     }
-    return directoryUriString;
+    return directoryUri;
   }
 
   public static boolean fileExists(FileIO fileIO, URI fileUri) {
+    // TODO(yili): FIX THIS. should not read file. list instead.
     InputFile inputFile = fileIO.newInputFile(fileUri.getPath());
     return inputFile.exists(); // Returns true if the file exists, false otherwise
   }
 
-  public static URI createDirectory(URI uri) {
-    validateURI(uri);
-    FileIO fileIO = fileIOFactory.getFileIO(uri);
-    if (fileExists(fileIO, uri)) {
-      throw new BaseException(ErrorCode.ALREADY_EXISTS, "Directory already exists: " + uri);
-    }
-    try {
-      // Add a trailing slash to represent the directory if not present
-      String dirPath = uri.getPath();
-      LOGGER.info("Directory created: " + dirPath);
-      return URI.create(dirPath);
-    } catch (Exception e) {
-      throw new RuntimeException("Failed to create directory: " + uri, e);
-    }
-  }
-
-  public static void deleteDirectory(String path) {
+  public void deleteDirectory(String path) {
     URI directoryUri = URI.create(toStandardizedURIString(path));
     validateURI(directoryUri);
     FileIO fileIO = fileIOFactory.getFileIO(directoryUri);
+    // This doesn't delete yet.
     fileIO.deleteFile(directoryUri.getPath());
     LOGGER.info("Directory deleted: " + directoryUri);
   }
@@ -218,6 +166,7 @@ public class FileOperations {
    * </pre>
    */
   public static String toStandardizedURIString(String inputPath) {
+    // make this return URI
     try {
       // Check if the path is already a URI with a valid scheme
       URI uri = new URI(inputPath);
@@ -225,9 +174,10 @@ public class FileOperations {
       if (uri.getScheme() != null) {
         return switch (uri.getScheme()) {
           case Constants.URI_SCHEME_FILE -> adjustLocalFileURI(uri).toString();
-          case Constants.URI_SCHEME_S3, Constants.URI_SCHEME_ABFS, Constants.URI_SCHEME_ABFSS, Constants.URI_SCHEME_GS ->
-                  uri.toString();
-          default -> throw new BaseException(ErrorCode.INVALID_ARGUMENT, "Unsupported URI scheme: " + uri.getScheme());
+          case Constants.URI_SCHEME_S3, Constants.URI_SCHEME_ABFS, Constants.URI_SCHEME_ABFSS,
+               Constants.URI_SCHEME_GS -> uri.toString();
+          default -> throw new BaseException(ErrorCode.INVALID_ARGUMENT,
+              "Unsupported URI scheme: " + uri.getScheme());
         };
       }
     } catch (URISyntaxException e) {

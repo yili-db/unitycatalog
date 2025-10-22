@@ -8,8 +8,6 @@ import io.unitycatalog.server.persist.dao.CatalogInfoDAO;
 import io.unitycatalog.server.persist.dao.SchemaInfoDAO;
 import io.unitycatalog.server.persist.dao.StagingTableDAO;
 import io.unitycatalog.server.persist.dao.TableInfoDAO;
-import io.unitycatalog.server.persist.utils.FileUtils;
-import io.unitycatalog.server.persist.utils.HibernateUtils;
 import io.unitycatalog.server.persist.utils.RepositoryUtils;
 import java.util.Date;
 import java.util.UUID;
@@ -21,20 +19,18 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 public class StagingTableRepository {
-  private static final StagingTableRepository INSTANCE = new StagingTableRepository();
   private static final Logger LOGGER = LoggerFactory.getLogger(StagingTableRepository.class);
-  private static final SessionFactory SESSION_FACTORY = HibernateUtils.getSessionFactory();
-  private static final SchemaRepository SCHEMA_REPOSITORY = SchemaRepository.getInstance();
-  private static final TableRepository TABLE_REPOSITORY = TableRepository.getInstance();
+  private final SessionFactory sessionFactory;
+  private final Repositories repositories;
 
-  private StagingTableRepository() {}
-
-  public static StagingTableRepository getInstance() {
-    return INSTANCE;
+  // TODO fix this
+  public StagingTableRepository(Repositories repositories, SessionFactory sessionFactory) {
+    this.repositories = repositories;
+    this.sessionFactory = sessionFactory;
   }
 
   public StagingTableInfo getStagingTableById(String stagingTableId) {
-    try (Session session = SESSION_FACTORY.openSession()) {
+    try (Session session = sessionFactory.openSession()) {
       StagingTableDAO stagingTableDAO =
           session.get(StagingTableDAO.class, UUID.fromString(stagingTableId));
       if (stagingTableDAO == null) {
@@ -83,7 +79,7 @@ public class StagingTableRepository {
           ErrorCode.ALREADY_EXISTS, "Staging table already exists: " + tableName);
     }
     TableInfoDAO existingTable =
-        TABLE_REPOSITORY.findBySchemaIdAndName(session, schemaId, tableName);
+        repositories.getTableRepository().findBySchemaIdAndName(session, schemaId, tableName);
     if (existingTable != null) {
       throw new BaseException(ErrorCode.ALREADY_EXISTS, "Table already exists: " + tableName);
     }
@@ -96,14 +92,18 @@ public class StagingTableRepository {
   }
 
   public StagingTableInfo createStagingTable(CreateStagingTable createStagingTable) {
-    try (Session session = SESSION_FACTORY.openSession()) {
+    try (Session session = sessionFactory.openSession()) {
       Transaction tx = session.beginTransaction();
       try {
         UUID schemaId =
             RepositoryUtils.getSchemaId(
-                session, createStagingTable.getCatalogName(), createStagingTable.getSchemaName());
+                session,
+                repositories.getSchemaRepository(),
+                createStagingTable.getCatalogName(),
+                createStagingTable.getSchemaName());
         UUID stagingTableId = UUID.randomUUID();
-        String stagingLocation = FileUtils.createTableDirectory(stagingTableId.toString());
+        String stagingLocation =
+            repositories.getFileOperations().createTableDirectory(stagingTableId.toString());
 
         validateIfAlreadyExists(session, schemaId, createStagingTable.getName(), stagingLocation);
 

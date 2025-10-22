@@ -12,10 +12,12 @@ import io.unitycatalog.cli.utils.CliParams;
 import io.unitycatalog.cli.utils.CliUtils;
 import io.unitycatalog.client.ApiClient;
 import io.unitycatalog.client.ApiException;
-import io.unitycatalog.client.api.StagingTablesApi;
 import io.unitycatalog.client.api.TablesApi;
 import io.unitycatalog.client.api.TemporaryCredentialsApi;
 import io.unitycatalog.client.model.*;
+import java.net.URI;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.List;
 import org.apache.commons.cli.CommandLine;
 import org.json.JSONException;
@@ -28,7 +30,6 @@ public class TableCli {
   public static void handle(CommandLine cmd, ApiClient apiClient)
       throws JsonProcessingException, ApiException {
     TablesApi tablesApi = new TablesApi(apiClient);
-    StagingTablesApi stagingTablesApi = new StagingTablesApi(apiClient);
     TemporaryCredentialsApi temporaryCredentialsApi = new TemporaryCredentialsApi(apiClient);
     String[] subArgs = cmd.getArgs();
     String subCommand = subArgs[1];
@@ -37,7 +38,7 @@ public class TableCli {
     String output = EMPTY;
     switch (subCommand) {
       case CliUtils.CREATE:
-        output = createTable(tablesApi, stagingTablesApi, temporaryCredentialsApi, json);
+        output = createTable(tablesApi, temporaryCredentialsApi, json);
         break;
       case CliUtils.LIST:
         output = listTables(tablesApi, json);
@@ -61,10 +62,7 @@ public class TableCli {
   }
 
   private static String createTable(
-      TablesApi apiClient,
-      StagingTablesApi stagingTablesApi,
-      TemporaryCredentialsApi temporaryCredentialsApi,
-      JSONObject json)
+      TablesApi tablesApi, TemporaryCredentialsApi temporaryCredentialsApi, JSONObject json)
       throws JsonProcessingException, ApiException {
     CliUtils.resolveFullNameToThreeLevelNamespace(json);
     try {
@@ -92,53 +90,59 @@ public class TableCli {
                 TableType.valueOf(
                     json.getString(CliParams.TABLE_TYPE.getServerParam()).toUpperCase()))
             .dataSourceFormat(DataSourceFormat.valueOf(format.toUpperCase()));
+    TemporaryCredentials temporaryCredentials;
     if (createTable.getTableType() == TableType.EXTERNAL) {
       if (!json.has(CliParams.STORAGE_LOCATION.getServerParam())) {
         throw new CliException("Storage location is required for external tables");
       }
-      createTable.storageLocation(json.getString(CliParams.STORAGE_LOCATION.getServerParam()));
-      handleTableStorageLocation(createTable.getStorageLocation(), columnInfoList);
-    } else {
-
+      String storageLocation = json.getString(CliParams.STORAGE_LOCATION.getServerParam());
+      createTable.setStorageLocation(storageLocation);
+      temporaryCredentials =
+          temporaryCredentialsApi.generateTemporaryPathCredentials(
+              new GenerateTemporaryPathCredential()
+                  .url(storageLocation)
+                  .operation(PathOperation.PATH_CREATE_TABLE));
+    } else if (createTable.getTableType() == TableType.MANAGED) {
       // handle delta managed tables
-      String stagingTableId;
-      String stagingLocation;
+      if (json.has(CliParams.STORAGE_LOCATION.getServerParam())) {
+        throw new CliException("Storage location is not allowed for managed tables");
+      }
       // Create staging table if format is delta
       if (DataSourceFormat.DELTA.name().equals(format.toUpperCase())) {
-        CreateStagingTable createStagingTable =
-            new CreateStagingTable()
-                .catalogName(json.getString(CliParams.CATALOG_NAME.getServerParam()))
-                .schemaName(json.getString(CliParams.SCHEMA_NAME.getServerParam()))
-                .name(json.getString(CliParams.NAME.getServerParam()));
-
-        StagingTableInfo stagingTableInfo = stagingTablesApi.createStagingTable(createStagingTable);
-        stagingTableId = stagingTableInfo.getId();
-        stagingLocation = stagingTableInfo.getStagingLocation();
-        if (stagingTableId == null || stagingLocation == null) {
-          throw new CliException("Failed to create staging table");
-        }
-        AwsCredentials awsCredentials =
-            temporaryCredentialsApi
-                .generateTemporaryTableCredentials(
-                    new GenerateTemporaryTableCredential()
-                        .tableId(stagingTableId)
-                        .operation(TableOperation.READ_WRITE))
-                .getAwsTempCredentials();
-        DeltaKernelUtils.createDeltaTable(stagingLocation, columnInfoList, awsCredentials);
-        createTable.setStorageLocation(stagingLocation);
-      } else {
         throw new CliException("Only delta tables are supported for managed tables");
       }
+      CreateStagingTable createStagingTable =
+          new CreateStagingTable()
+              .catalogName(json.getString(CliParams.CATALOG_NAME.getServerParam()))
+              .schemaName(json.getString(CliParams.SCHEMA_NAME.getServerParam()))
+              .name(json.getString(CliParams.NAME.getServerParam()));
+      StagingTableInfo stagingTableInfo = tablesApi.createStagingTable(createStagingTable);
+      String stagingTableId = stagingTableInfo.getId();
+      String stagingLocation = stagingTableInfo.getStagingLocation();
+      if (stagingTableId == null || stagingLocation == null) {
+        throw new CliException("Failed to create staging table");
+      }
+      createTable.setStorageLocation(stagingLocation);
+      temporaryCredentials =
+          temporaryCredentialsApi.generateTemporaryTableCredentials(
+              new GenerateTemporaryTableCredential()
+                  .tableId(stagingTableId)
+                  .operation(TableOperation.READ_WRITE));
+    } else {
+      throw new CliException("Unknown table type");
     }
-    TableInfo tableInfo = tablesApi.createTable(createTable);
-    TemporaryCredentials temporaryCredentials =
-        temporaryCredentialsApi.generateTemporaryTableCredentials(
-            new GenerateTemporaryTableCredential()
-                .tableId(tableInfo.getTableId())
-                .operation(TableOperation.READ_WRITE));
     DeltaKernelUtils.createDeltaTable(
-        tableInfo.getStorageLocation(), columnInfoList, temporaryCredentials);
+        createTable.getStorageLocation(), columnInfoList, temporaryCredentials);
+    TableInfo tableInfo = tablesApi.createTable(createTable);
     return objectWriter.writeValueAsString(tableInfo);
+  }
+
+  private static Path getLocalPath(String path) {
+    if (path.startsWith("file:")) {
+      return Paths.get(URI.create(path));
+    } else {
+      return Paths.get(path);
+    }
   }
 
   private static String listTables(TablesApi tablesApi, JSONObject json)
@@ -185,7 +189,7 @@ public class TableCli {
           temporaryCredentialsApi.generateTemporaryTableCredentials(
               new GenerateTemporaryTableCredential()
                   .tableId(tableId)
-                  .operation(TableOperation.READ_WRITE));
+                  .operation(TableOperation.READ));
       return DeltaKernelUtils.readDeltaTable(
           info.getStorageLocation(), temporaryCredentials, maxResults);
     } catch (Exception e) {

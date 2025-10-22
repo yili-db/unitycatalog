@@ -8,13 +8,9 @@ import static io.unitycatalog.server.model.SecurableType.SCHEMA;
 import static io.unitycatalog.server.model.SecurableType.TABLE;
 import static io.unitycatalog.server.model.SecurableType.VOLUME;
 
-import io.unitycatalog.server.model.CatalogInfo;
-import io.unitycatalog.server.model.FunctionInfo;
-import io.unitycatalog.server.model.RegisteredModelInfo;
-import io.unitycatalog.server.model.SchemaInfo;
-import io.unitycatalog.server.model.SecurableType;
-import io.unitycatalog.server.model.TableInfo;
-import io.unitycatalog.server.model.VolumeInfo;
+import io.unitycatalog.server.exception.BaseException;
+import io.unitycatalog.server.exception.ErrorCode;
+import io.unitycatalog.server.model.*;
 import io.unitycatalog.server.persist.*;
 import java.util.HashMap;
 import java.util.Map;
@@ -24,6 +20,7 @@ public class KeyMapper {
   private final CatalogRepository catalogRepository;
   private final SchemaRepository schemaRepository;
   private final TableRepository tableRepository;
+  private final StagingTableRepository stagingTableRepository;
   private final VolumeRepository volumeRepository;
   private final FunctionRepository functionRepository;
   private final ModelRepository modelRepository;
@@ -33,6 +30,7 @@ public class KeyMapper {
     this.catalogRepository = repositories.getCatalogRepository();
     this.schemaRepository = repositories.getSchemaRepository();
     this.tableRepository = repositories.getTableRepository();
+    this.stagingTableRepository = repositories.getStagingTableRepository();
     this.volumeRepository = repositories.getVolumeRepository();
     this.functionRepository = repositories.getFunctionRepository();
     this.modelRepository = repositories.getModelRepository();
@@ -56,25 +54,41 @@ public class KeyMapper {
     }
 
     // If only TABLE is specified, assuming its value is a full table name (including catalog and
-    // schema)
+    // schema) or a table UUID.
     if (!resourceKeys.containsKey(CATALOG)
         && !resourceKeys.containsKey(SCHEMA)
         && resourceKeys.containsKey(TABLE)) {
       String fullName = (String) resourceKeys.get(TABLE);
       // If the full name contains a dot, we assume it's a full name, otherwise we assume it's an id
+      boolean isTableName = fullName.contains(".");
       String catalogName;
       String schemaName;
       String tableId;
-      boolean isStagingTable = false;
       try {
         TableInfo table =
-            fullName.contains(".")
-              ? TableRepository.getInstance().getTable(fullName)
-              : TableRepository.getInstance().getTableById(fullName);
-      String fullSchemaName = table.getCatalogName() + "." + table.getSchemaName();
-      SchemaInfo schema = SchemaRepository.getInstance().getSchema(fullSchemaName);
-      CatalogInfo catalog = CatalogRepository.getInstance().getCatalog(table.getCatalogName());
-      resourceIds.put(TABLE, UUID.fromString(table.getTableId()));
+            isTableName
+                ? tableRepository.getTable(fullName)
+                : tableRepository.getTableById(fullName);
+        catalogName = table.getCatalogName();
+        schemaName = table.getSchemaName();
+        tableId = table.getTableId();
+      } catch (BaseException e) {
+        if (!isTableName && e.getErrorCode().equals(ErrorCode.NOT_FOUND)) {
+          // Check if this is actually a request for staging table. Staging tables are only
+          // addressed via their IDs.
+          StagingTableInfo stagingTable = stagingTableRepository.getStagingTableById(fullName);
+          catalogName = stagingTable.getCatalogName();
+          schemaName = stagingTable.getSchemaName();
+          tableId = stagingTable.getId();
+        } else {
+          throw e;
+        }
+      }
+
+      String fullSchemaName = catalogName + "." + schemaName;
+      SchemaInfo schema = schemaRepository.getSchema(fullSchemaName);
+      CatalogInfo catalog = catalogRepository.getCatalog(catalogName);
+      resourceIds.put(TABLE, UUID.fromString(tableId));
       resourceIds.put(SCHEMA, UUID.fromString(schema.getSchemaId()));
       resourceIds.put(CATALOG, UUID.fromString(catalog.getId()));
     }
