@@ -147,7 +147,7 @@ public class TableRepository {
             .dataSourceFormat(createTable.getDataSourceFormat())
             .columns(columnInfos)
             .storageLocation(
-                FileOperations.convertRelativePathToURI(createTable.getStorageLocation()))
+                FileOperations.toStandardizedURIString(createTable.getStorageLocation()))
             .comment(createTable.getComment())
             .properties(createTable.getProperties())
             .owner(callerId)

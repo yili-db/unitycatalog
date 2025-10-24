@@ -100,7 +100,7 @@ public class FileOperations {
 
   public void deleteDirectory(String path) {
     URI directoryUri = createURI(path);
-    validateURI(directoryUri);
+    UriUtils.validateURI(directoryUri);
     if (directoryUri.getScheme() == null || directoryUri.getScheme().equals("file")) {
       try {
         deleteLocalDirectory(Paths.get(directoryUri));
@@ -197,34 +197,13 @@ public class FileOperations {
     return URI.create(uriString);
   }
 
-  public static String convertRelativePathToURI(String url) {
-    if (url == null) {
-      return null;
-    }
-    if (isSupportedCloudStorageUri(url)) {
-      return url;
-    } else {
-      return adjustLocalFileURI(createURI(url)).toString();
-    }
-  }
-
   public static boolean isSupportedCloudStorageUri(String url) {
     String scheme = URI.create(url).getScheme();
     return scheme != null && Constants.SUPPORTED_CLOUD_SCHEMES.contains(scheme);
   }
 
-  private static void validateURI(URI uri) {
-    if (uri.getScheme() == null) {
-      throw new BaseException(ErrorCode.INVALID_ARGUMENT, "Invalid path: " + uri.getPath());
-    }
-    URI normalized = uri.normalize();
-    if (!normalized.getPath().startsWith(uri.getPath())) {
-      throw new BaseException(ErrorCode.INVALID_ARGUMENT, "Normalization failed: " + uri.getPath());
-    }
-  }
-
   public static void assertValidLocation(String location) {
-    validateURI(URI.create(location));
+    UriUtils.validateURI(URI.create(location));
   }
 
   /**
@@ -280,7 +259,13 @@ public class FileOperations {
     } catch (URISyntaxException e) {
       // Not a valid URI, treat it as a file path
     }
-    return Paths.get(inputPath).toUri().toString();
+    String localUri = Paths.get(inputPath).toUri().toString();
+    if (!inputPath.endsWith("/") && localUri.endsWith("/")) {
+      // A special case where the local inputPath is a directory already exist, generated localUri
+      // will have an extra trailing slash. Remove it to make it consistent.
+      localUri = localUri.substring(0, localUri.length() - 1);
+    }
+    return localUri;
   }
 
   private String getStorageRoot() {

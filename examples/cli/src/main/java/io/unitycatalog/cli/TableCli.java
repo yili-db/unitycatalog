@@ -5,6 +5,7 @@ import static io.unitycatalog.cli.utils.CliUtils.EMPTY;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.ObjectWriter;
+import io.delta.kernel.exceptions.TableAlreadyExistsException;
 import io.unitycatalog.cli.delta.DeltaKernelUtils;
 import io.unitycatalog.cli.delta.DeltaKernelWriteUtils;
 import io.unitycatalog.cli.utils.CliException;
@@ -15,6 +16,8 @@ import io.unitycatalog.client.ApiException;
 import io.unitycatalog.client.api.TablesApi;
 import io.unitycatalog.client.api.TemporaryCredentialsApi;
 import io.unitycatalog.client.model.*;
+import java.net.URI;
+import java.nio.file.Paths;
 import java.util.List;
 import org.apache.commons.cli.CommandLine;
 import org.json.JSONException;
@@ -92,13 +95,17 @@ public class TableCli {
       if (!json.has(CliParams.STORAGE_LOCATION.getServerParam())) {
         throw new CliException("Storage location is required for external tables");
       }
-      String storageLocation = json.getString(CliParams.STORAGE_LOCATION.getServerParam());
+      String storageLocation =
+          normalizeLocalPath(json.getString(CliParams.STORAGE_LOCATION.getServerParam()));
       createTable.setStorageLocation(storageLocation);
-      temporaryCredentials =
-          temporaryCredentialsApi.generateTemporaryPathCredentials(
-              new GenerateTemporaryPathCredential()
-                  .url(storageLocation)
-                  .operation(PathOperation.PATH_CREATE_TABLE));
+      // Currently generateTemporaryPathCredentials doesn't quite work yet. So this would only
+      // work for local dir.
+      temporaryCredentials = null;
+      // temporaryCredentials =
+      //     temporaryCredentialsApi.generateTemporaryPathCredentials(
+      //         new GenerateTemporaryPathCredential()
+      //             .url(storageLocation)
+      //             .operation(PathOperation.PATH_CREATE_TABLE));
     } else if (createTable.getTableType() == TableType.MANAGED) {
       // handle delta managed tables
       if (json.has(CliParams.STORAGE_LOCATION.getServerParam())) {
@@ -128,33 +135,51 @@ public class TableCli {
     } else {
       throw new CliException("Unknown table type");
     }
-    DeltaKernelUtils.createDeltaTable(
-        createTable.getStorageLocation(), columnInfoList, temporaryCredentials);
+
+    // try and initialize the directory and initiate delta log at the location
+    try {
+      DeltaKernelUtils.createDeltaTable(
+          createTable.getStorageLocation(), columnInfoList, temporaryCredentials);
+    } catch (Exception e) {
+      if (e instanceof TableAlreadyExistsException
+          || e.getCause() instanceof TableAlreadyExistsException) {
+        // TODO confirm the schema of the existing table matches the schema of the new table
+      } else {
+        throw new CliException(
+            "Failed to create delta table at " + createTable.getStorageLocation(), e);
+      }
+    }
+
     TableInfo tableInfo = tablesApi.createTable(createTable);
     return objectWriter.writeValueAsString(tableInfo);
   }
 
-  //  private static Path getLocalPath(String path) {
-  //    if (path.startsWith("file:")) {
-  //      return Paths.get(URI.create(path));
-  //    } else {
-  //      return Paths.get(path);
-  //    }
-  //  }
-  //
-  //  private static String handleTableStorageLocation(String storageLocation) {
-  //    if (!(storageLocation.startsWith("abfs://")
-  //        ||storageLocation.startsWith("abfss://")
-  //        ||storageLocation.startsWith("gs://")
-  //        ||storageLocation.startsWith("s3://")
-  //        || storageLocation.startsWith("file:/")
-  //        || storageLocation.startsWith("/"))) {
-  //      throw new CliException(
-  //          "Storage location must start with s3:// etc or file:/ or be an absolute local
-  // filesystem path.");
-  //    }
-  //    return storageLocation;
-  //  }
+  private static String normalizeLocalPath(String storageLocation) {
+    boolean isCloud = storageLocation.startsWith("abfs://")
+        || storageLocation.startsWith("abfss://")
+        || storageLocation.startsWith("gs://")
+        || storageLocation.startsWith("s3://");
+
+    if (!(isCloud
+        || storageLocation.startsWith("file:/")
+        || storageLocation.startsWith("/"))) {
+      throw new CliException(
+          "Storage location must start with s3:// etc or file:/ or be an absolute local filesystem path.");
+    }
+    if (isCloud) {
+      return storageLocation;
+    } else if (!storageLocation.startsWith("file:/")) {
+      String localUri = Paths.get(storageLocation).toUri().toString();
+      if (!storageLocation.endsWith("/") && localUri.endsWith("/")) {
+        // A special case where the local inputPath is a directory already exist, generated localUri
+        // will have an extra trailing slash. Remove it to make it consistent.
+        localUri = localUri.substring(0, localUri.length() - 1);
+      }
+      return localUri;
+    } else {
+      return Paths.get(URI.create(storageLocation)).toUri().toString();
+    }
+  }
 
   private static String listTables(TablesApi tablesApi, JSONObject json)
       throws JsonProcessingException, ApiException {

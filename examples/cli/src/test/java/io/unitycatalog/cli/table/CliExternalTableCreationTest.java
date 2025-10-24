@@ -101,6 +101,8 @@ public class CliExternalTableCreationTest extends BaseServerTest {
                 .columns(columns));
     assertThat(tableInfo).isNotNull();
     assertThat(tableInfo.getTableId()).isNotNull();
+    assertThat(tableInfo.getStorageLocation()).isEqualTo("file://" + tablePath);
+    assertThat(tableInfo.getTableType()).isEqualTo(TableType.EXTERNAL);
     assertThat(tableOperations.getTable(TABLE_FULL_NAME).getTableId())
         .isEqualTo(tableInfo.getTableId());
     assertThatCode(

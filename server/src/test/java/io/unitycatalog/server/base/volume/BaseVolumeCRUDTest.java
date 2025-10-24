@@ -56,7 +56,7 @@ public abstract class BaseVolumeCRUDTest extends BaseCRUDTest {
     assertThat(volumeInfo.getVolumeType()).isEqualTo(createVolumeRequest.getVolumeType());
     assertThat(volumeInfo.getStorageLocation())
         .isEqualTo(
-            FileOperations.convertRelativePathToURI(createVolumeRequest.getStorageLocation()));
+            FileOperations.toStandardizedURIString(createVolumeRequest.getStorageLocation()));
     assertThat(volumeInfo.getFullName()).isEqualTo(volumeFullName);
     assertThat(volumeInfo.getCreatedAt()).isNotNull();
   }
