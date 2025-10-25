@@ -81,7 +81,6 @@ public class TableInfoDAO extends IdentifiableDAO {
         .updatedAt(tableInfo.getUpdatedAt() != null ? new Date(tableInfo.getUpdatedAt()) : null)
         .updatedBy(tableInfo.getUpdatedBy())
         .columnCount(tableInfo.getColumns() != null ? tableInfo.getColumns().size() : 0)
-        .url(tableInfo.getStorageLocation() != null ? tableInfo.getStorageLocation() : null)
         .type(tableInfo.getTableType().toString())
         .dataSourceFormat(tableInfo.getDataSourceFormat().toString())
         .url(tableInfo.getStorageLocation())
@@ -90,11 +89,13 @@ public class TableInfoDAO extends IdentifiableDAO {
         .build();
   }
 
-  public TableInfo toTableInfo(boolean fetchColumns) {
+  public TableInfo toTableInfo(boolean fetchColumns, String catalogName, String schemaName) {
     TableInfo tableInfo =
         new TableInfo()
             .tableId(getId().toString())
             .name(getName())
+            .catalogName(catalogName)
+            .schemaName(schemaName)
             .tableType(TableType.valueOf(type))
             .dataSourceFormat(DataSourceFormat.valueOf(dataSourceFormat))
             .storageLocation(FileOperations.toStandardizedURIString(url))

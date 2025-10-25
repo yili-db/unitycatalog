@@ -155,14 +155,13 @@ public class TableCli {
   }
 
   private static String normalizeLocalPath(String storageLocation) {
-    boolean isCloud = storageLocation.startsWith("abfs://")
-        || storageLocation.startsWith("abfss://")
-        || storageLocation.startsWith("gs://")
-        || storageLocation.startsWith("s3://");
+    boolean isCloud =
+        storageLocation.startsWith("abfs://")
+            || storageLocation.startsWith("abfss://")
+            || storageLocation.startsWith("gs://")
+            || storageLocation.startsWith("s3://");
 
-    if (!(isCloud
-        || storageLocation.startsWith("file:/")
-        || storageLocation.startsWith("/"))) {
+    if (!(isCloud || storageLocation.startsWith("file:/") || storageLocation.startsWith("/"))) {
       throw new CliException(
           "Storage location must start with s3:// etc or file:/ or be an absolute local filesystem path.");
     }

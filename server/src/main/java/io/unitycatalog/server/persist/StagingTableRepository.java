@@ -4,16 +4,16 @@ import io.unitycatalog.server.exception.BaseException;
 import io.unitycatalog.server.exception.ErrorCode;
 import io.unitycatalog.server.model.CreateStagingTable;
 import io.unitycatalog.server.model.StagingTableInfo;
-import io.unitycatalog.server.persist.dao.CatalogInfoDAO;
-import io.unitycatalog.server.persist.dao.SchemaInfoDAO;
 import io.unitycatalog.server.persist.dao.StagingTableDAO;
 import io.unitycatalog.server.persist.dao.TableInfoDAO;
+import io.unitycatalog.server.persist.utils.RepositoryUtils;
 import io.unitycatalog.server.persist.utils.TransactionManager;
 import io.unitycatalog.server.utils.IdentityUtils;
 import io.unitycatalog.server.utils.ValidationUtils;
 import java.util.Date;
 import java.util.Objects;
 import java.util.UUID;
+import org.apache.commons.lang3.tuple.Pair;
 import org.hibernate.Session;
 import org.hibernate.SessionFactory;
 import org.hibernate.query.Query;
@@ -41,20 +41,10 @@ public class StagingTableRepository {
             throw new BaseException(
                 ErrorCode.NOT_FOUND, "Staging table not found: " + stagingTableId);
           }
-          SchemaInfoDAO schemaInfoDAO =
-              session.get(SchemaInfoDAO.class, stagingTableDAO.getSchemaId());
-          if (schemaInfoDAO == null) {
-            throw new BaseException(
-                ErrorCode.NOT_FOUND, "Schema not found: " + stagingTableDAO.getSchemaId());
-          }
-          CatalogInfoDAO catalogInfoDAO =
-              session.get(CatalogInfoDAO.class, schemaInfoDAO.getCatalogId());
-          if (catalogInfoDAO == null) {
-            throw new BaseException(
-                ErrorCode.NOT_FOUND, "Catalog not found: " + schemaInfoDAO.getCatalogId());
-          }
+          Pair<String, String> catalogAndSchemaNames =
+                  RepositoryUtils.getCatalogAndSchemaNames(session, stagingTableDAO.getSchemaId());
           return stagingTableDAO.toStagingTableInfo(
-              catalogInfoDAO.getName(), schemaInfoDAO.getName());
+              catalogAndSchemaNames.getLeft(), catalogAndSchemaNames.getRight());
         },
         "Failed to get staging table by ID",
         /* readOnly = */ true);
@@ -94,7 +84,7 @@ public class StagingTableRepository {
         findByStagingLocation(session, stagingLocation);
     if (existingStagingTableAtLocation != null) {
       throw new BaseException(
-          ErrorCode.ALREADY_EXISTS, "Staging table already exists: " + stagingLocation);
+          ErrorCode.ALREADY_EXISTS, "Staging table already exists at: " + stagingLocation);
     }
   }
 
@@ -150,18 +140,18 @@ public class StagingTableRepository {
     if (stagingTableDAO == null) {
       throw new BaseException(ErrorCode.NOT_FOUND, "Staging table not found: " + storageLocation);
     }
-    // Commit the staging table
-    if (stagingTableDAO.isStageCommitted()) {
-      throw new BaseException(
-          ErrorCode.FAILED_PRECONDITION, "Staging table already committed: " + storageLocation);
-    }
     if (!Objects.equals(stagingTableDAO.getCreatedBy(), callerId)) {
       throw new BaseException(
           ErrorCode.PERMISSION_DENIED,
           "User attempts to create table on a staging location without ownership: "
               + storageLocation);
     }
+    if (stagingTableDAO.isStageCommitted()) {
+      throw new BaseException(
+          ErrorCode.FAILED_PRECONDITION, "Staging table already committed: " + storageLocation);
+    }
 
+    // Commit the staging table
     Date now = new Date();
     stagingTableDAO.setStageCommitted(true);
     stagingTableDAO.setStageCommittedAt(now);

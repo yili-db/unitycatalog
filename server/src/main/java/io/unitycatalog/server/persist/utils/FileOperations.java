@@ -197,11 +197,6 @@ public class FileOperations {
     return URI.create(uriString);
   }
 
-  public static boolean isSupportedCloudStorageUri(String url) {
-    String scheme = URI.create(url).getScheme();
-    return scheme != null && Constants.SUPPORTED_CLOUD_SCHEMES.contains(scheme);
-  }
-
   public static void assertValidLocation(String location) {
     UriUtils.validateURI(URI.create(location));
   }
