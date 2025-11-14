@@ -1,0 +1,132 @@
+<?xml version="1.0" encoding="utf-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>SecurityContext.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=2;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Jacoco Coverage Report</a> &gt; <a href="index.source.html" class="el_package">io.unitycatalog.server.security</a> &gt; <span class="el_source">SecurityContext.java</span></div><h1>SecurityContext.java</h1><pre class="source lang-java linenums">package io.unitycatalog.server.security;
+
+import com.auth0.jwt.JWT;
+import com.auth0.jwt.algorithms.Algorithm;
+import com.auth0.jwt.interfaces.DecodedJWT;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.security.interfaces.RSAPrivateKey;
+import java.security.interfaces.RSAPublicKey;
+import java.util.ArrayList;
+import java.util.Base64;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import lombok.Getter;
+import lombok.SneakyThrows;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+public class SecurityContext {
+
+  public interface Issuers {
+    String INTERNAL = &quot;internal&quot;;
+  }
+
+<span class="fc" id="L30">  private static final ObjectMapper mapper = new ObjectMapper();</span>
+<span class="fc" id="L31">  private static final Logger LOGGER = LoggerFactory.getLogger(SecurityContext.class);</span>
+
+<span class="fc" id="L33">  @Getter private final Path certsFile;</span>
+  private final Path serviceTokenFile;
+
+<span class="nc" id="L36">  @Getter private final RSAPublicKey rsaPublicKey;</span>
+<span class="nc" id="L37">  @Getter private final RSAPrivateKey rsaPrivateKey;</span>
+<span class="nc" id="L38">  @Getter private final Algorithm algorithm;</span>
+<span class="nc" id="L39">  @Getter private final String serviceToken;</span>
+<span class="nc" id="L40">  @Getter private final String keyId;</span>
+<span class="nc" id="L41">  @Getter private final String serviceName;</span>
+<span class="nc" id="L42">  @Getter private final String localIssuer;</span>
+
+<span class="pc" id="L44">  @SneakyThrows</span>
+  public SecurityContext(
+      Path configurationFolder,
+      SecurityConfiguration securityConfiguration,
+      String serviceName,
+<span class="fc" id="L49">      String localIssuer) {</span>
+<span class="fc" id="L50">    this.serviceName = serviceName;</span>
+<span class="fc" id="L51">    this.localIssuer = localIssuer;</span>
+
+<span class="fc" id="L53">    certsFile = configurationFolder.resolve(&quot;certs.json&quot;);</span>
+<span class="fc" id="L54">    serviceTokenFile = configurationFolder.resolve(&quot;token.txt&quot;);</span>
+
+<span class="fc" id="L56">    rsaPublicKey = securityConfiguration.rsaPublicKey();</span>
+<span class="fc" id="L57">    rsaPrivateKey = securityConfiguration.rsaPrivateKey();</span>
+<span class="fc" id="L58">    algorithm = securityConfiguration.algorithmRSA();</span>
+<span class="fc" id="L59">    keyId = securityConfiguration.getKeyId();</span>
+
+    // Do this every time because the SecurityConfiguration parameters
+    // might have changed since last started.
+<span class="fc" id="L63">    serviceToken = createServiceToken();</span>
+
+<span class="fc" id="L65">    createInternalCertsFile();</span>
+<span class="fc" id="L66">    createServiceTokenFile();</span>
+
+<span class="fc" id="L68">    LOGGER.info(&quot;--- Internal Certs Configuration --&quot;);</span>
+<span class="fc" id="L69">    LOGGER.info(getInternalCertsFile());</span>
+<span class="fc" id="L70">  }</span>
+
+  public String createAccessToken(DecodedJWT decodedJWT) {
+<span class="nc" id="L73">    String subject =</span>
+        decodedJWT
+<span class="nc" id="L75">            .getClaims()</span>
+<span class="nc" id="L76">            .getOrDefault(JwtClaim.EMAIL.key(), decodedJWT.getClaim(JwtClaim.SUBJECT.key()))</span>
+<span class="nc" id="L77">            .asString();</span>
+
+<span class="nc" id="L79">    return JWT.create()</span>
+<span class="nc" id="L80">        .withSubject(serviceName)</span>
+<span class="nc" id="L81">        .withIssuer(localIssuer)</span>
+<span class="nc" id="L82">        .withIssuedAt(new Date())</span>
+<span class="nc" id="L83">        .withKeyId(keyId)</span>
+<span class="nc" id="L84">        .withJWTId(UUID.randomUUID().toString())</span>
+<span class="nc" id="L85">        .withClaim(JwtClaim.TOKEN_TYPE.key(), JwtTokenType.ACCESS.name())</span>
+<span class="nc" id="L86">        .withClaim(JwtClaim.SUBJECT.key(), subject)</span>
+<span class="nc" id="L87">        .sign(algorithm);</span>
+  }
+
+  public String createServiceToken() {
+<span class="fc" id="L91">    return JWT.create()</span>
+<span class="fc" id="L92">        .withSubject(serviceName)</span>
+<span class="fc" id="L93">        .withIssuer(localIssuer)</span>
+<span class="fc" id="L94">        .withIssuedAt(new Date())</span>
+<span class="fc" id="L95">        .withKeyId(keyId)</span>
+<span class="fc" id="L96">        .withJWTId(UUID.randomUUID().toString())</span>
+<span class="fc" id="L97">        .withClaim(JwtClaim.TOKEN_TYPE.key(), JwtTokenType.SERVICE.name())</span>
+<span class="fc" id="L98">        .withClaim(JwtClaim.SUBJECT.key(), &quot;admin&quot;)</span>
+<span class="fc" id="L99">        .sign(algorithm);</span>
+  }
+
+<span class="pc" id="L102">  @SneakyThrows</span>
+  public void createInternalCertsFile() {
+<span class="fc" id="L104">    Map&lt;String, Object&gt; key = new LinkedHashMap&lt;&gt;();</span>
+<span class="fc" id="L105">    key.put(&quot;kid&quot;, keyId);</span>
+<span class="fc" id="L106">    key.put(&quot;use&quot;, &quot;sig&quot;);</span>
+<span class="fc" id="L107">    key.put(&quot;kty&quot;, rsaPublicKey.getAlgorithm());</span>
+<span class="fc" id="L108">    key.put(&quot;alg&quot;, algorithm.getName());</span>
+<span class="fc" id="L109">    key.put(</span>
+<span class="fc" id="L110">        &quot;e&quot;, Base64.getUrlEncoder().encodeToString(rsaPublicKey.getPublicExponent().toByteArray()));</span>
+<span class="fc" id="L111">    key.put(&quot;n&quot;, Base64.getUrlEncoder().encodeToString(rsaPublicKey.getModulus().toByteArray()));</span>
+
+<span class="fc" id="L113">    List&lt;Map&gt; keyList = new ArrayList&lt;&gt;();</span>
+<span class="fc" id="L114">    keyList.add(key);</span>
+
+<span class="fc" id="L116">    Map&lt;String, Object&gt; keyMap = new HashMap&lt;&gt;();</span>
+<span class="fc" id="L117">    keyMap.put(&quot;keys&quot;, keyList);</span>
+<span class="fc" id="L118">    Files.writeString(</span>
+<span class="fc" id="L119">        certsFile, mapper.writerWithDefaultPrettyPrinter().writeValueAsString(keyMap));</span>
+<span class="fc" id="L120">  }</span>
+
+<span class="nc" id="L122">  @SneakyThrows</span>
+  public String getInternalCertsFile() {
+<span class="fc" id="L124">    return Files.readString(certsFile);</span>
+  }
+
+<span class="pc" id="L127">  @SneakyThrows</span>
+  public void createServiceTokenFile() {
+<span class="fc" id="L129">    Files.writeString(serviceTokenFile, serviceToken);</span>
+<span class="fc" id="L130">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.7.202105040129</span></div></body></html>

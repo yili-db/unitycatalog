@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="utf-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AllowingAuthorizer.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=2;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Jacoco Coverage Report</a> &gt; <a href="index.source.html" class="el_package">io.unitycatalog.server.auth</a> &gt; <span class="el_source">AllowingAuthorizer.java</span></div><h1>AllowingAuthorizer.java</h1><pre class="source lang-java linenums">package io.unitycatalog.server.auth;
+
+import io.unitycatalog.server.persist.model.Privileges;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+
+/**
+ * An authorizer that allows all actions.
+ *
+ * &lt;p&gt;This is a simple implementation of UnityCatalogAuthorizer that allows all actions for all
+ * principals. This is useful for testing and development purposes. It does not enforce any access
+ * control policies nor persist any data.
+ */
+<span class="fc" id="L15">public class AllowingAuthorizer implements UnityCatalogAuthorizer {</span>
+  @Override
+  public boolean grantAuthorization(UUID principal, UUID resource, Privileges action) {
+<span class="fc" id="L18">    return true;</span>
+  }
+
+  @Override
+  public boolean revokeAuthorization(UUID principal, UUID resource, Privileges action) {
+<span class="nc" id="L23">    return true;</span>
+  }
+
+  @Override
+  public boolean clearAuthorizationsForPrincipal(UUID principal) {
+<span class="nc" id="L28">    return true;</span>
+  }
+
+  @Override
+  public boolean clearAuthorizationsForResource(UUID resource) {
+<span class="fc" id="L33">    return true;</span>
+  }
+
+  @Override
+  public boolean addHierarchyChild(UUID parent, UUID child) {
+<span class="fc" id="L38">    return true;</span>
+  }
+
+  @Override
+  public boolean removeHierarchyChild(UUID parent, UUID child) {
+<span class="fc" id="L43">    return true;</span>
+  }
+
+  @Override
+  public boolean removeHierarchyChildren(UUID resource) {
+<span class="fc" id="L48">    return true;</span>
+  }
+
+  @Override
+  public UUID getHierarchyParent(UUID resource) {
+<span class="nc" id="L53">    return null;</span>
+  }
+
+  @Override
+  public boolean authorize(UUID principal, UUID resource, Privileges action) {
+<span class="fc" id="L58">    return true;</span>
+  }
+
+  @Override
+  public boolean authorizeAny(UUID principal, UUID resource, Privileges... actions) {
+<span class="fc" id="L63">    return true;</span>
+  }
+
+  @Override
+  public boolean authorizeAll(UUID principal, UUID resource, Privileges... actions) {
+<span class="nc" id="L68">    return true;</span>
+  }
+
+  @Override
+  public List&lt;Privileges&gt; listAuthorizations(UUID principal, UUID resource) {
+<span class="nc" id="L73">    return List.of();</span>
+  }
+
+  @Override
+  public Map&lt;UUID, List&lt;Privileges&gt;&gt; listAuthorizations(UUID resource) {
+<span class="nc" id="L78">    return Map.of();</span>
+  }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.7.202105040129</span></div></body></html>

@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>IcebergRestExceptionHandler.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=2;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Jacoco Coverage Report</a> &gt; <a href="index.source.html" class="el_package">io.unitycatalog.server.exception</a> &gt; <span class="el_source">IcebergRestExceptionHandler.java</span></div><h1>IcebergRestExceptionHandler.java</h1><pre class="source lang-java linenums">package io.unitycatalog.server.exception;
+
+import com.linecorp.armeria.common.HttpRequest;
+import com.linecorp.armeria.common.HttpResponse;
+import com.linecorp.armeria.common.HttpStatus;
+import com.linecorp.armeria.common.MediaType;
+import com.linecorp.armeria.server.ServiceRequestContext;
+import com.linecorp.armeria.server.annotation.ExceptionHandlerFunction;
+import io.unitycatalog.server.utils.RESTObjectMapper;
+import lombok.SneakyThrows;
+import org.apache.iceberg.exceptions.AlreadyExistsException;
+import org.apache.iceberg.exceptions.BadRequestException;
+import org.apache.iceberg.exceptions.CommitFailedException;
+import org.apache.iceberg.exceptions.NamespaceNotEmptyException;
+import org.apache.iceberg.exceptions.NoSuchNamespaceException;
+import org.apache.iceberg.exceptions.NoSuchTableException;
+import org.apache.iceberg.exceptions.NoSuchViewException;
+import org.apache.iceberg.rest.responses.ErrorResponse;
+
+<span class="fc" id="L20">public class IcebergRestExceptionHandler implements ExceptionHandlerFunction {</span>
+  @Override
+  public HttpResponse handleException(ServiceRequestContext ctx, HttpRequest req, Throwable cause) {
+    try {
+<span class="pc bpc" id="L24" title="1 of 2 branches missed.">      if (cause instanceof BaseException) {</span>
+        // FIXME!! we should probably translate BaseException -&gt; Iceberg REST exception somewhere
+<span class="nc" id="L26">        return handleBaseException((BaseException) cause);</span>
+<span class="pc bpc" id="L27" title="2 of 6 branches missed.">      } else if (cause instanceof NoSuchNamespaceException</span>
+          || cause instanceof NoSuchTableException
+          || cause instanceof NoSuchViewException) {
+<span class="fc" id="L30">        return createErrorResponse(HttpStatus.NOT_FOUND, cause);</span>
+<span class="pc bpc" id="L31" title="3 of 6 branches missed.">      } else if (cause instanceof AlreadyExistsException</span>
+          || cause instanceof NamespaceNotEmptyException
+          || cause instanceof CommitFailedException) {
+<span class="nc" id="L34">        return createErrorResponse(HttpStatus.CONFLICT, cause);</span>
+<span class="pc bpc" id="L35" title="2 of 4 branches missed.">      } else if (cause instanceof IllegalArgumentException</span>
+          || cause instanceof BadRequestException) {
+<span class="fc" id="L37">        return createErrorResponse(HttpStatus.BAD_REQUEST, cause);</span>
+      } else {
+<span class="nc" id="L39">        return createErrorResponse(HttpStatus.INTERNAL_SERVER_ERROR, cause);</span>
+      }
+<span class="nc" id="L41">    } catch (Exception e) {</span>
+<span class="nc" id="L42">      return HttpResponse.of(HttpStatus.INTERNAL_SERVER_ERROR);</span>
+    }
+  }
+
+  private HttpResponse handleBaseException(BaseException exception) {
+<span class="nc" id="L47">    return createErrorResponse(exception.getErrorCode().getHttpStatus(), exception);</span>
+  }
+
+<span class="nc" id="L50">  @SneakyThrows</span>
+  private HttpResponse createErrorResponse(HttpStatus status, Throwable cause) {
+<span class="fc" id="L52">    return HttpResponse.of(</span>
+        status,
+        MediaType.JSON,
+<span class="fc" id="L55">        RESTObjectMapper.mapper()</span>
+<span class="fc" id="L56">            .writeValueAsString(</span>
+<span class="fc" id="L57">                ErrorResponse.builder()</span>
+<span class="fc" id="L58">                    .responseCode(status.code())</span>
+<span class="fc" id="L59">                    .withType(cause.getClass().getSimpleName())</span>
+<span class="fc" id="L60">                    .withMessage(cause.getMessage())</span>
+<span class="fc" id="L61">                    .build()));</span>
+  }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.7.202105040129</span></div></body></html>

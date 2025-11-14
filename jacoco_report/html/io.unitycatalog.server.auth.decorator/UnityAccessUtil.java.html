@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>UnityAccessUtil.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=2;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Jacoco Coverage Report</a> &gt; <a href="index.source.html" class="el_package">io.unitycatalog.server.auth.decorator</a> &gt; <span class="el_source">UnityAccessUtil.java</span></div><h1>UnityAccessUtil.java</h1><pre class="source lang-java linenums">package io.unitycatalog.server.auth.decorator;
+
+import io.unitycatalog.control.model.User;
+import io.unitycatalog.server.auth.UnityCatalogAuthorizer;
+import io.unitycatalog.server.exception.BaseException;
+import io.unitycatalog.server.persist.MetastoreRepository;
+import io.unitycatalog.server.persist.Repositories;
+import io.unitycatalog.server.persist.UserRepository;
+import io.unitycatalog.server.persist.model.CreateUser;
+import io.unitycatalog.server.persist.model.Privileges;
+import java.util.UUID;
+
+public class UnityAccessUtil {
+
+  private final UserRepository userRepository;
+  private final MetastoreRepository metastoreRepository;
+
+<span class="fc" id="L18">  public UnityAccessUtil(Repositories repositories) {</span>
+<span class="fc" id="L19">    this.userRepository = repositories.getUserRepository();</span>
+<span class="fc" id="L20">    this.metastoreRepository = repositories.getMetastoreRepository();</span>
+<span class="fc" id="L21">  }</span>
+
+  public void initializeAdmin(UnityCatalogAuthorizer authorizer) {
+
+    // If no admin user exists, lets create one and grant the admin as
+    // the OWNER for this server. This is meant to allow a bootstrap
+    // for the server and provide an admin account with which regular users
+    // can be subsequently added.
+    //
+    // Note that if the user exists, we don't want to do anything else because
+    // also as bootstrapping, one may want to deactivate or decrease the privileges
+    // the admin user has.
+
+    try {
+<span class="nc" id="L35">      userRepository.getUserByEmail(&quot;admin&quot;);</span>
+<span class="nc" id="L36">      return;</span>
+<span class="fc" id="L37">    } catch (BaseException e) {</span>
+      // IGNORE - this should be user not found exception.
+    }
+
+<span class="fc" id="L41">    CreateUser createUser = CreateUser.builder().email(&quot;admin&quot;).name(&quot;Admin&quot;).build();</span>
+
+<span class="fc" id="L43">    User adminUser = userRepository.createUser(createUser);</span>
+
+<span class="fc" id="L45">    authorizer.grantAuthorization(</span>
+<span class="fc" id="L46">        UUID.fromString(adminUser.getId()), metastoreRepository.getMetastoreId(), Privileges.OWNER);</span>
+<span class="fc" id="L47">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.7.202105040129</span></div></body></html>

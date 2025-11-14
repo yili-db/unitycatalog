@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="utf-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>UserDAO.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=2;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Jacoco Coverage Report</a> &gt; <a href="index.source.html" class="el_package">io.unitycatalog.server.persist.dao</a> &gt; <span class="el_source">UserDAO.java</span></div><h1>UserDAO.java</h1><pre class="source lang-java linenums">package io.unitycatalog.server.persist.dao;
+
+import io.unitycatalog.control.model.User;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.Table;
+import java.util.Date;
+import java.util.UUID;
+import lombok.AllArgsConstructor;
+import lombok.EqualsAndHashCode;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import lombok.Setter;
+import lombok.experimental.SuperBuilder;
+
+@Entity
+@Table(name = &quot;uc_users&quot;)
+// Lombok annotations
+@Getter
+<span class="pc" id="L20">@Setter</span>
+<span class="fc" id="L21">@NoArgsConstructor</span>
+<span class="nc" id="L22">@AllArgsConstructor</span>
+<span class="nc bnc" id="L23" title="All 56 branches missed.">@EqualsAndHashCode(callSuper = true)</span>
+<span class="pc" id="L24">@SuperBuilder</span>
+public class UserDAO extends IdentifiableDAO {
+  @Column(name = &quot;email&quot;)
+<span class="fc" id="L27">  private String email;</span>
+
+  @Column(name = &quot;external_id&quot;)
+<span class="fc" id="L30">  private String externalId;</span>
+
+  @Column(name = &quot;state&quot;)
+<span class="fc" id="L33">  private String state;</span>
+
+  @Column(name = &quot;created_at&quot;)
+<span class="fc" id="L36">  private Date createdAt;</span>
+
+  @Column(name = &quot;updated_at&quot;)
+<span class="fc" id="L39">  private Date updatedAt;</span>
+
+  @Column(name = &quot;picture_url&quot;)
+<span class="fc" id="L42">  private String pictureUrl;</span>
+
+  public static UserDAO from(User user) {
+<span class="fc" id="L45">    return UserDAO.builder()</span>
+<span class="fc" id="L46">        .id(UUID.fromString(user.getId()))</span>
+<span class="fc" id="L47">        .name(user.getName())</span>
+<span class="fc" id="L48">        .email(user.getEmail())</span>
+<span class="fc" id="L49">        .externalId(user.getExternalId())</span>
+<span class="fc" id="L50">        .state(user.getState().name())</span>
+<span class="fc" id="L51">        .pictureUrl(user.getPictureUrl())</span>
+<span class="fc" id="L52">        .createdAt(new Date(user.getCreatedAt()))</span>
+<span class="pc bpc" id="L53" title="1 of 2 branches missed.">        .updatedAt(user.getUpdatedAt() == null ? null : new Date(user.getUpdatedAt()))</span>
+<span class="fc" id="L54">        .build();</span>
+  }
+
+  public User toUser() {
+<span class="fc" id="L58">    return new User()</span>
+<span class="fc" id="L59">        .id(getId().toString())</span>
+<span class="fc" id="L60">        .name(getName())</span>
+<span class="fc" id="L61">        .email(getEmail())</span>
+<span class="fc" id="L62">        .externalId(getExternalId())</span>
+<span class="fc" id="L63">        .state(User.StateEnum.fromValue(getState()))</span>
+<span class="fc" id="L64">        .pictureUrl(getPictureUrl())</span>
+<span class="fc" id="L65">        .createdAt(getCreatedAt().getTime())</span>
+<span class="pc bpc" id="L66" title="1 of 2 branches missed.">        .updatedAt(getUpdatedAt() == null ? null : getUpdatedAt().getTime());</span>
+  }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.7.202105040129</span></div></body></html>

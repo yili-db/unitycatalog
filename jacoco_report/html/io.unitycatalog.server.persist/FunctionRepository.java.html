@@ -1,0 +1,246 @@
+<?xml version="1.0" encoding="utf-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>FunctionRepository.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=2;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Jacoco Coverage Report</a> &gt; <a href="index.source.html" class="el_package">io.unitycatalog.server.persist</a> &gt; <span class="el_source">FunctionRepository.java</span></div><h1>FunctionRepository.java</h1><pre class="source lang-java linenums">package io.unitycatalog.server.persist;
+
+import io.unitycatalog.server.exception.BaseException;
+import io.unitycatalog.server.exception.ErrorCode;
+import io.unitycatalog.server.model.CreateFunction;
+import io.unitycatalog.server.model.CreateFunctionRequest;
+import io.unitycatalog.server.model.FunctionInfo;
+import io.unitycatalog.server.model.ListFunctionsResponse;
+import io.unitycatalog.server.persist.dao.FunctionInfoDAO;
+import io.unitycatalog.server.persist.dao.SchemaInfoDAO;
+import io.unitycatalog.server.persist.utils.PagedListingHelper;
+import io.unitycatalog.server.persist.utils.RepositoryUtils;
+import io.unitycatalog.server.persist.utils.TransactionManager;
+import io.unitycatalog.server.utils.Constants;
+import io.unitycatalog.server.utils.IdentityUtils;
+import io.unitycatalog.server.utils.ValidationUtils;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+import org.hibernate.Session;
+import org.hibernate.SessionFactory;
+import org.hibernate.query.Query;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+public class FunctionRepository {
+<span class="fc" id="L28">  private static final Logger LOGGER = LoggerFactory.getLogger(FunctionRepository.class);</span>
+  private final Repositories repositories;
+  private final SessionFactory sessionFactory;
+<span class="fc" id="L31">  private static final PagedListingHelper&lt;FunctionInfoDAO&gt; LISTING_HELPER =</span>
+      new PagedListingHelper&lt;&gt;(FunctionInfoDAO.class);
+
+<span class="fc" id="L34">  public FunctionRepository(Repositories repositories, SessionFactory sessionFactory) {</span>
+<span class="fc" id="L35">    this.repositories = repositories;</span>
+<span class="fc" id="L36">    this.sessionFactory = sessionFactory;</span>
+<span class="fc" id="L37">  }</span>
+
+  public FunctionInfo createFunction(CreateFunctionRequest createFunctionRequest) {
+<span class="fc" id="L40">    ValidationUtils.validateSqlObjectName(createFunctionRequest.getFunctionInfo().getName());</span>
+<span class="fc" id="L41">    CreateFunction createFunction = createFunctionRequest.getFunctionInfo();</span>
+<span class="fc" id="L42">    String callerId = IdentityUtils.findPrincipalEmailAddress();</span>
+<span class="fc" id="L43">    Long createTime = System.currentTimeMillis();</span>
+<span class="fc" id="L44">    FunctionInfo functionInfo =</span>
+        new FunctionInfo()
+<span class="fc" id="L46">            .functionId(UUID.randomUUID().toString())</span>
+<span class="fc" id="L47">            .name(createFunction.getName())</span>
+<span class="fc" id="L48">            .catalogName(createFunction.getCatalogName())</span>
+<span class="fc" id="L49">            .schemaName(createFunction.getSchemaName())</span>
+<span class="fc" id="L50">            .comment(createFunction.getComment())</span>
+<span class="fc" id="L51">            .properties(createFunction.getProperties())</span>
+<span class="fc" id="L52">            .owner(callerId)</span>
+<span class="fc" id="L53">            .createdAt(createTime)</span>
+<span class="fc" id="L54">            .createdBy(callerId)</span>
+<span class="fc" id="L55">            .updatedAt(createTime)</span>
+<span class="fc" id="L56">            .updatedBy(callerId)</span>
+<span class="fc" id="L57">            .dataType(createFunction.getDataType())</span>
+<span class="fc" id="L58">            .fullDataType(createFunction.getFullDataType())</span>
+<span class="fc" id="L59">            .inputParams(createFunction.getInputParams())</span>
+<span class="fc" id="L60">            .returnParams(createFunction.getReturnParams())</span>
+<span class="fc" id="L61">            .fullName(</span>
+<span class="fc" id="L62">                createFunction.getCatalogName()</span>
+                    + &quot;.&quot;
+<span class="fc" id="L64">                    + createFunction.getSchemaName()</span>
+                    + &quot;.&quot;
+<span class="fc" id="L66">                    + createFunction.getName())</span>
+<span class="fc" id="L67">            .externalLanguage(createFunction.getExternalLanguage())</span>
+<span class="fc" id="L68">            .isDeterministic(createFunction.getIsDeterministic())</span>
+<span class="fc" id="L69">            .isNullCall(createFunction.getIsNullCall())</span>
+<span class="fc" id="L70">            .parameterStyle(</span>
+<span class="fc" id="L71">                FunctionInfo.ParameterStyleEnum.valueOf(createFunction.getParameterStyle().name()))</span>
+<span class="fc" id="L72">            .routineBody(</span>
+<span class="fc" id="L73">                FunctionInfo.RoutineBodyEnum.valueOf(createFunction.getRoutineBody().name()))</span>
+<span class="fc" id="L74">            .routineDefinition(createFunction.getRoutineDefinition())</span>
+<span class="fc" id="L75">            .securityType(</span>
+<span class="fc" id="L76">                FunctionInfo.SecurityTypeEnum.valueOf(createFunction.getSecurityType().name()))</span>
+<span class="fc" id="L77">            .specificName(createFunction.getSpecificName());</span>
+<span class="pc bpc" id="L78" title="1 of 2 branches missed.">    if (createFunction.getSqlDataAccess() != null) {</span>
+<span class="fc" id="L79">      functionInfo.setSqlDataAccess(</span>
+<span class="fc" id="L80">          FunctionInfo.SqlDataAccessEnum.valueOf(createFunction.getSqlDataAccess().toString()));</span>
+    }
+
+<span class="fc" id="L83">    return TransactionManager.executeWithTransaction(</span>
+        sessionFactory,
+        session -&gt; {
+          String catalogName = createFunction.getCatalogName();
+          String schemaName = createFunction.getSchemaName();
+          SchemaInfoDAO schemaInfo =
+              repositories.getSchemaRepository().getSchemaDAO(session, catalogName, schemaName);
+          if (schemaInfo == null) {
+            throw new BaseException(ErrorCode.NOT_FOUND, &quot;Schema not found: &quot; + schemaName);
+          }
+          if (getFunctionDAO(session, catalogName, schemaName, createFunction.getName()) != null) {
+            throw new BaseException(
+                ErrorCode.ALREADY_EXISTS, &quot;Function already exists: &quot; + createFunction.getName());
+          }
+          FunctionInfoDAO dao = FunctionInfoDAO.from(functionInfo);
+          dao.setSchemaId(schemaInfo.getId());
+          dao.getInputParams()
+              .forEach(
+                  p -&gt; {
+                    p.setId(UUID.randomUUID());
+                    p.setFunction(dao);
+                  });
+          dao.getReturnParams()
+              .forEach(
+                  p -&gt; {
+                    p.setId(UUID.randomUUID());
+                    p.setFunction(dao);
+                  });
+          session.persist(dao);
+          return functionInfo;
+        },
+        &quot;Failed to create function&quot;,
+        /* readOnly = */ false);
+  }
+
+  private void addNamespaceData(FunctionInfo functionInfo, String catalogName, String schemaName) {
+<span class="fc" id="L119">    functionInfo.setCatalogName(catalogName);</span>
+<span class="fc" id="L120">    functionInfo.setSchemaName(schemaName);</span>
+<span class="fc" id="L121">    functionInfo.setFullName(catalogName + &quot;.&quot; + schemaName + &quot;.&quot; + functionInfo.getName());</span>
+<span class="fc" id="L122">  }</span>
+
+  /**
+   * Return the list of functions in ascending order of function name.
+   *
+   * @param catalogName
+   * @param schemaName
+   * @param maxResults
+   * @param pageToken
+   * @return
+   */
+  public ListFunctionsResponse listFunctions(
+      String catalogName,
+      String schemaName,
+      Optional&lt;Integer&gt; maxResults,
+      Optional&lt;String&gt; pageToken) {
+<span class="fc" id="L138">    return TransactionManager.executeWithTransaction(</span>
+        sessionFactory,
+        session -&gt; {
+          UUID schemaId =
+              repositories.getSchemaRepository().getSchemaId(session, catalogName, schemaName);
+          return listFunctions(session, schemaId, catalogName, schemaName, maxResults, pageToken);
+        },
+        &quot;Failed to list functions&quot;,
+        /* readOnly = */ true);
+  }
+
+  public ListFunctionsResponse listFunctions(
+      Session session,
+      UUID schemaId,
+      String catalogName,
+      String schemaName,
+      Optional&lt;Integer&gt; maxResults,
+      Optional&lt;String&gt; pageToken) {
+<span class="fc" id="L156">    List&lt;FunctionInfoDAO&gt; functionInfoDAOList =</span>
+<span class="fc" id="L157">        LISTING_HELPER.listEntity(session, maxResults, pageToken, schemaId);</span>
+<span class="fc" id="L158">    String nextPageToken = LISTING_HELPER.getNextPageToken(functionInfoDAOList, maxResults);</span>
+<span class="fc" id="L159">    List&lt;FunctionInfo&gt; result = new ArrayList&lt;&gt;();</span>
+<span class="fc bfc" id="L160" title="All 2 branches covered.">    for (FunctionInfoDAO functionInfoDAO : functionInfoDAOList) {</span>
+<span class="fc" id="L161">      FunctionInfo functionInfo = functionInfoDAO.toFunctionInfo();</span>
+<span class="fc" id="L162">      RepositoryUtils.attachProperties(</span>
+<span class="fc" id="L163">          functionInfo, functionInfo.getFunctionId(), Constants.FUNCTION, session);</span>
+<span class="fc" id="L164">      addNamespaceData(functionInfo, catalogName, schemaName);</span>
+<span class="fc" id="L165">      result.add(functionInfo);</span>
+<span class="fc" id="L166">    }</span>
+<span class="fc" id="L167">    return new ListFunctionsResponse().functions(result).nextPageToken(nextPageToken);</span>
+  }
+
+  public FunctionInfo getFunction(String name) {
+<span class="fc" id="L171">    return TransactionManager.executeWithTransaction(</span>
+        sessionFactory,
+        session -&gt; {
+          String[] parts = name.split(&quot;\\.&quot;);
+          if (parts.length != 3) {
+            throw new BaseException(ErrorCode.INVALID_ARGUMENT, &quot;Invalid function name: &quot; + name);
+          }
+          String catalogName = parts[0], schemaName = parts[1], functionName = parts[2];
+          FunctionInfoDAO functionInfoDAO =
+              getFunctionDAO(session, catalogName, schemaName, functionName);
+          if (functionInfoDAO == null) {
+            throw new BaseException(ErrorCode.NOT_FOUND, &quot;Function not found: &quot; + name);
+          }
+          FunctionInfo functionInfo = functionInfoDAO.toFunctionInfo();
+          addNamespaceInfo(functionInfo, catalogName, schemaName);
+          RepositoryUtils.attachProperties(
+              functionInfo, functionInfo.getFunctionId(), Constants.FUNCTION, session);
+          return functionInfo;
+        },
+        &quot;Failed to get function&quot;,
+        /* readOnly = */ true);
+  }
+
+  public void addNamespaceInfo(FunctionInfo functionInfo, String catalogName, String schemaName) {
+<span class="fc" id="L195">    addNamespaceData(functionInfo, catalogName, schemaName);</span>
+<span class="fc" id="L196">  }</span>
+
+  public FunctionInfoDAO getFunctionDAO(
+      Session session, String catalogName, String schemaName, String functionName) {
+<span class="fc" id="L200">    UUID schemaId =</span>
+<span class="fc" id="L201">        repositories.getSchemaRepository().getSchemaId(session, catalogName, schemaName);</span>
+<span class="fc" id="L202">    return getFunctionDAO(session, schemaId, functionName);</span>
+  }
+
+  public FunctionInfoDAO getFunctionDAO(Session session, UUID schemaId, String functionName) {
+<span class="fc" id="L206">    Query&lt;FunctionInfoDAO&gt; query =</span>
+<span class="fc" id="L207">        session.createQuery(</span>
+            &quot;FROM FunctionInfoDAO WHERE name = :name and schemaId = :schemaId&quot;,
+            FunctionInfoDAO.class);
+<span class="fc" id="L210">    query.setParameter(&quot;name&quot;, functionName);</span>
+<span class="fc" id="L211">    query.setParameter(&quot;schemaId&quot;, schemaId);</span>
+<span class="fc" id="L212">    query.setMaxResults(1);</span>
+<span class="fc" id="L213">    return query.uniqueResult();</span>
+  }
+
+  public void deleteFunction(String name, Boolean force) {
+<span class="fc" id="L217">    TransactionManager.executeWithTransaction(</span>
+        sessionFactory,
+        session -&gt; {
+          String[] parts = name.split(&quot;\\.&quot;);
+          if (parts.length != 3) {
+            throw new BaseException(ErrorCode.INVALID_ARGUMENT, &quot;Invalid function name: &quot; + name);
+          }
+          String catalogName = parts[0], schemaName = parts[1], functionName = parts[2];
+          SchemaInfoDAO schemaInfo =
+              repositories.getSchemaRepository().getSchemaDAO(session, catalogName, schemaName);
+          if (schemaInfo == null) {
+            throw new BaseException(ErrorCode.NOT_FOUND, &quot;Schema not found: &quot; + schemaName);
+          }
+          deleteFunction(session, schemaInfo.getId(), functionName);
+          LOGGER.info(&quot;Deleted function: {}&quot;, functionName);
+          return null;
+        },
+        &quot;Failed to delete function&quot;,
+        /* readOnly = */ false);
+<span class="fc" id="L236">  }</span>
+
+  public void deleteFunction(Session session, UUID schemaId, String functionName) {
+<span class="fc" id="L239">    FunctionInfoDAO functionInfoDAO = getFunctionDAO(session, schemaId, functionName);</span>
+<span class="pc bpc" id="L240" title="1 of 2 branches missed.">    if (functionInfoDAO == null) {</span>
+<span class="nc" id="L241">      throw new BaseException(ErrorCode.NOT_FOUND, &quot;Function not found: &quot; + functionName);</span>
+    }
+<span class="fc" id="L243">    session.remove(functionInfoDAO);</span>
+<span class="fc" id="L244">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.7.202105040129</span></div></body></html>

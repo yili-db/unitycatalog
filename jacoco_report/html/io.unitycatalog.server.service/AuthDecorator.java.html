@@ -1,0 +1,115 @@
+<?xml version="1.0" encoding="utf-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AuthDecorator.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=2;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Jacoco Coverage Report</a> &gt; <a href="index.source.html" class="el_package">io.unitycatalog.server.service</a> &gt; <span class="el_source">AuthDecorator.java</span></div><h1>AuthDecorator.java</h1><pre class="source lang-java linenums">package io.unitycatalog.server.service;
+
+import static io.unitycatalog.server.security.SecurityContext.Issuers.INTERNAL;
+
+import com.auth0.jwt.JWT;
+import com.auth0.jwt.JWTVerifier;
+import com.auth0.jwt.interfaces.DecodedJWT;
+import com.linecorp.armeria.common.Cookie;
+import com.linecorp.armeria.common.HttpHeaderNames;
+import com.linecorp.armeria.common.HttpRequest;
+import com.linecorp.armeria.common.HttpResponse;
+import com.linecorp.armeria.server.DecoratingHttpServiceFunction;
+import com.linecorp.armeria.server.HttpService;
+import com.linecorp.armeria.server.ServiceRequestContext;
+import io.netty.util.AttributeKey;
+import io.unitycatalog.control.model.User;
+import io.unitycatalog.server.exception.AuthorizationException;
+import io.unitycatalog.server.exception.ErrorCode;
+import io.unitycatalog.server.persist.Repositories;
+import io.unitycatalog.server.persist.UserRepository;
+import io.unitycatalog.server.security.SecurityContext;
+import io.unitycatalog.server.utils.JwksOperations;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * Simple JWT access-token authorization decorator.
+ *
+ * &lt;p&gt;This decorator implements simple authorization. It requires an Authorization header in the
+ * request with a Bearer token. The token is verified to be from the &quot;internal&quot; issuer and the token
+ * signature is checked against the internal issuer key. If all these checks pass, the request is
+ * allowed to continue.
+ *
+ * &lt;p&gt;The decoded token is also added to the request attributes so it can be referenced by the
+ * request if needed.
+ */
+public class AuthDecorator implements DecoratingHttpServiceFunction {
+
+<span class="fc" id="L39">  private static final Logger LOGGER = LoggerFactory.getLogger(AuthDecorator.class);</span>
+  private final UserRepository userRepository;
+
+  public static final String UC_TOKEN_KEY = &quot;UC_TOKEN&quot;;
+
+  private static final String BEARER_PREFIX = &quot;Bearer &quot;;
+
+<span class="fc" id="L46">  public static final AttributeKey&lt;DecodedJWT&gt; DECODED_JWT_ATTR =</span>
+<span class="fc" id="L47">      AttributeKey.valueOf(DecodedJWT.class, &quot;DECODED_JWT_ATTR&quot;);</span>
+
+  private final JwksOperations jwksOperations;
+
+<span class="fc" id="L51">  public AuthDecorator(SecurityContext securityContext, Repositories repositories) {</span>
+<span class="fc" id="L52">    this.jwksOperations = new JwksOperations(securityContext);</span>
+<span class="fc" id="L53">    this.userRepository = repositories.getUserRepository();</span>
+<span class="fc" id="L54">  }</span>
+
+  @Override
+  public HttpResponse serve(HttpService delegate, ServiceRequestContext ctx, HttpRequest req)
+      throws Exception {
+<span class="fc" id="L59">    LOGGER.debug(&quot;AuthDecorator checking {}&quot;, req.path());</span>
+
+<span class="fc" id="L61">    String authorizationHeader = req.headers().get(HttpHeaderNames.AUTHORIZATION);</span>
+<span class="fc" id="L62">    String authorizationCookie =</span>
+<span class="fc" id="L63">        req.headers().cookies().stream()</span>
+<span class="fc" id="L64">            .filter(c -&gt; c.name().equals(UC_TOKEN_KEY))</span>
+<span class="fc" id="L65">            .map(Cookie::value)</span>
+<span class="fc" id="L66">            .findFirst()</span>
+<span class="fc" id="L67">            .orElse(null);</span>
+
+<span class="fc" id="L69">    DecodedJWT decodedJWT =</span>
+<span class="fc" id="L70">        JWT.decode(getAccessTokenFromCookieOrAuthHeader(authorizationHeader, authorizationCookie));</span>
+
+<span class="fc" id="L72">    String issuer = decodedJWT.getIssuer();</span>
+<span class="fc" id="L73">    String keyId = decodedJWT.getKeyId();</span>
+
+<span class="fc" id="L75">    LOGGER.debug(&quot;Validating access-token for issuer: {} and keyId: {}&quot;, issuer, keyId);</span>
+
+<span class="pc bpc" id="L77" title="1 of 2 branches missed.">    if (!issuer.equals(INTERNAL)) {</span>
+<span class="nc" id="L78">      throw new AuthorizationException(ErrorCode.PERMISSION_DENIED, &quot;Invalid access token.&quot;);</span>
+    }
+
+<span class="fc" id="L81">    JWTVerifier jwtVerifier = jwksOperations.verifierForIssuerAndKey(issuer, keyId);</span>
+<span class="fc" id="L82">    decodedJWT = jwtVerifier.verify(decodedJWT);</span>
+
+<span class="fc" id="L84">    String subject = decodedJWT.getSubject();</span>
+
+    User user;
+    try {
+<span class="fc" id="L88">      user = userRepository.getUserByEmail(subject);</span>
+<span class="nc" id="L89">    } catch (Exception e) {</span>
+<span class="nc" id="L90">      LOGGER.debug(&quot;User not found: {}&quot;, subject);</span>
+<span class="nc" id="L91">      user = null;</span>
+<span class="fc" id="L92">    }</span>
+<span class="pc bpc" id="L93" title="2 of 4 branches missed.">    if (user == null || user.getState() != User.StateEnum.ENABLED) {</span>
+<span class="nc" id="L94">      throw new AuthorizationException(ErrorCode.PERMISSION_DENIED, &quot;User not allowed: &quot; + subject);</span>
+    }
+
+<span class="fc" id="L97">    LOGGER.debug(&quot;Access allowed for subject: {}&quot;, subject);</span>
+
+<span class="fc" id="L99">    ctx.setAttr(DECODED_JWT_ATTR, decodedJWT);</span>
+
+<span class="fc" id="L101">    return delegate.serve(ctx, req);</span>
+  }
+
+  private String getAccessTokenFromCookieOrAuthHeader(
+      String authorizationHeader, String authorizationCookie) {
+<span class="pc bpc" id="L106" title="2 of 4 branches missed.">    if (authorizationHeader != null &amp;&amp; authorizationHeader.startsWith(BEARER_PREFIX)) {</span>
+<span class="fc" id="L107">      return authorizationHeader.substring(BEARER_PREFIX.length());</span>
+    }
+<span class="nc bnc" id="L109" title="All 2 branches missed.">    if (authorizationCookie != null) {</span>
+<span class="nc" id="L110">      return authorizationCookie;</span>
+    }
+<span class="nc" id="L112">    throw new AuthorizationException(ErrorCode.UNAUTHENTICATED, &quot;No authorization found.&quot;);</span>
+  }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.7.202105040129</span></div></body></html>

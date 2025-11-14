@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="utf-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>PropertyDAO.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=2;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Jacoco Coverage Report</a> &gt; <a href="index.source.html" class="el_package">io.unitycatalog.server.persist.dao</a> &gt; <span class="el_source">PropertyDAO.java</span></div><h1>PropertyDAO.java</h1><pre class="source lang-java linenums">package io.unitycatalog.server.persist.dao;
+
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.Id;
+import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import java.util.stream.Collectors;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.EqualsAndHashCode;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import lombok.Setter;
+import lombok.ToString;
+import org.hibernate.annotations.UuidGenerator;
+
+// Hibernate annotations
+@Entity
+@Table(
+    name = &quot;uc_properties&quot;,
+    uniqueConstraints = {
+      @UniqueConstraint(columnNames = {&quot;entity_id&quot;, &quot;entity_type&quot;, &quot;property_key&quot;})
+    })
+// Lombok annotations
+@Getter
+<span class="nc" id="L31">@Setter</span>
+<span class="fc" id="L32">@NoArgsConstructor</span>
+<span class="fc" id="L33">@AllArgsConstructor</span>
+<span class="nc bnc" id="L34" title="All 46 branches missed.">@EqualsAndHashCode</span>
+<span class="nc" id="L35">@ToString</span>
+<span class="pc" id="L36">@Builder</span>
+public class PropertyDAO {
+  @Id
+  @UuidGenerator
+  @Column(name = &quot;id&quot;, updatable = false, nullable = false)
+<span class="nc" id="L41">  private UUID id;</span>
+
+  @Column(name = &quot;entity_id&quot;, nullable = false)
+<span class="nc" id="L44">  private UUID entityId;</span>
+
+  @Column(name = &quot;entity_type&quot;, nullable = false)
+<span class="nc" id="L47">  private String entityType;</span>
+
+  @Column(name = &quot;property_key&quot;, nullable = false)
+<span class="fc" id="L50">  private String key;</span>
+
+  @Column(name = &quot;property_value&quot;, nullable = false)
+<span class="fc" id="L53">  private String value;</span>
+
+  public static List&lt;PropertyDAO&gt; from(
+      Map&lt;String, String&gt; properties, UUID entityId, String entityType) {
+<span class="pc bpc" id="L57" title="1 of 2 branches missed.">    if (properties == null) {</span>
+<span class="nc" id="L58">      return new ArrayList&lt;&gt;();</span>
+    }
+<span class="fc" id="L60">    return properties.entrySet().stream()</span>
+<span class="fc" id="L61">        .map(</span>
+            entry -&gt;
+                PropertyDAO.builder()
+                    .key(entry.getKey())
+                    .value(entry.getValue())
+                    .entityId(entityId)
+                    .entityType(entityType)
+                    .build())
+<span class="fc" id="L69">        .collect(Collectors.toList());</span>
+  }
+
+  public static Map&lt;String, String&gt; toMap(List&lt;PropertyDAO&gt; propertyDAOList) {
+<span class="fc" id="L73">    return propertyDAOList.stream()</span>
+<span class="fc" id="L74">        .collect(Collectors.toMap(PropertyDAO::getKey, PropertyDAO::getValue));</span>
+  }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.7.202105040129</span></div></body></html>

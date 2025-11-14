@@ -1,0 +1,226 @@
+<?xml version="1.0" encoding="utf-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ServerProperties.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=2;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Jacoco Coverage Report</a> &gt; <a href="index.source.html" class="el_package">io.unitycatalog.server.utils</a> &gt; <span class="el_source">ServerProperties.java</span></div><h1>ServerProperties.java</h1><pre class="source lang-java linenums">package io.unitycatalog.server.utils;
+
+import io.unitycatalog.server.exception.BaseException;
+import io.unitycatalog.server.exception.ErrorCode;
+import io.unitycatalog.server.service.credential.aws.S3StorageConfig;
+import io.unitycatalog.server.service.credential.azure.ADLSStorageConfig;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Properties;
+import lombok.Getter;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+public class ServerProperties {
+
+<span class="fc" id="L22">  private static final Logger LOGGER = LoggerFactory.getLogger(ServerProperties.class);</span>
+<span class="pc" id="L23">  private final Properties properties = new Properties(generateDefaults());</span>
+
+<span class="fc" id="L25">  @Getter</span>
+  public enum Property {
+<span class="fc" id="L27">    SERVER_ENV(&quot;server.env&quot;),</span>
+<span class="fc" id="L28">    AUTHORIZATION_ENABLED(&quot;server.authorization&quot;, &quot;disable&quot;),</span>
+<span class="fc" id="L29">    AUTHORIZATION_URL(&quot;server.authorization-url&quot;),</span>
+<span class="fc" id="L30">    TOKEN_URL(&quot;server.token-url&quot;),</span>
+<span class="fc" id="L31">    CLIENT_ID(&quot;server.client-id&quot;),</span>
+<span class="fc" id="L32">    CLIENT_SECRET(&quot;server.client-secret&quot;),</span>
+<span class="fc" id="L33">    REDIRECT_PORT(&quot;server.redirect-port&quot;),</span>
+<span class="fc" id="L34">    COOKIE_TIMEOUT(&quot;server.cookie-timeout&quot;, &quot;P5D&quot;),</span>
+<span class="fc" id="L35">    MANAGED_TABLE_ENABLED(&quot;server.managed-table.enabled&quot;, &quot;false&quot;),</span>
+<span class="fc" id="L36">    MODEL_STORAGE_ROOT(&quot;storage-root.models&quot;, &quot;file:///tmp/ucroot&quot;),</span>
+<span class="fc" id="L37">    TABLE_STORAGE_ROOT(&quot;storage-root.tables&quot;, &quot;file:///tmp/ucroot&quot;),</span>
+<span class="fc" id="L38">    AWS_S3_ACCESS_KEY(&quot;aws.s3.accessKey&quot;),</span>
+<span class="fc" id="L39">    AWS_S3_SECRET_KEY(&quot;aws.s3.secretKey&quot;),</span>
+<span class="fc" id="L40">    AWS_S3_SESSION_TOKEN(&quot;aws.s3.sessionToken&quot;),</span>
+<span class="fc" id="L41">    AWS_REGION(&quot;aws.region&quot;);</span>
+    // The is not an exhaustive list. Some property keys like s3.bucketPath.0 with a numbering
+    // suffix is not included. They are only accessed internally from functions like
+    // getS3Configurations.
+
+<span class="fc" id="L46">    private final String key;</span>
+<span class="nc" id="L47">    private final String defaultValue;</span>
+
+<span class="fc" id="L49">    Property(String key, String defaultValue) {</span>
+<span class="fc" id="L50">      this.key = key;</span>
+<span class="fc" id="L51">      this.defaultValue = defaultValue;</span>
+<span class="fc" id="L52">    }</span>
+
+    Property(String key) {
+<span class="fc" id="L55">      this(key, null);</span>
+<span class="fc" id="L56">    }</span>
+  }
+
+<span class="fc" id="L59">  public ServerProperties() {}</span>
+
+<span class="nc" id="L61">  public ServerProperties(String propertiesFile) {</span>
+<span class="nc" id="L62">    readPropertiesFromFile(propertiesFile);</span>
+<span class="nc" id="L63">  }</span>
+
+<span class="fc" id="L65">  public ServerProperties(Properties inputProperties) {</span>
+<span class="fc" id="L66">    properties.putAll(inputProperties);</span>
+<span class="fc" id="L67">  }</span>
+
+  // Load properties from a configuration file
+  private static Properties generateDefaults() {
+<span class="fc" id="L71">    Properties defaults = new Properties();</span>
+<span class="fc" id="L72">    Arrays.stream(Property.values())</span>
+<span class="fc" id="L73">        .filter(property -&gt; property.defaultValue != null)</span>
+<span class="fc" id="L74">        .forEach(property -&gt; defaults.setProperty(property.key, property.defaultValue));</span>
+<span class="fc" id="L75">    return defaults;</span>
+  }
+
+  // Load properties from a configuration file
+  private void readPropertiesFromFile(String propertiesFile) {
+<span class="nc" id="L80">    Path path = Paths.get(propertiesFile);</span>
+<span class="nc bnc" id="L81" title="All 2 branches missed.">    if (path.toFile().exists()) {</span>
+<span class="nc" id="L82">      try (InputStream input = Files.newInputStream(path)) {</span>
+<span class="nc" id="L83">        properties.load(input);</span>
+<span class="nc" id="L84">        LOGGER.debug(&quot;Server properties loaded successfully: {}&quot;, path);</span>
+<span class="nc" id="L85">      } catch (IOException ex) {</span>
+<span class="nc" id="L86">        LOGGER.error(&quot;Exception during loading properties&quot;, ex);</span>
+<span class="nc" id="L87">      }</span>
+    }
+<span class="nc" id="L89">  }</span>
+
+  public Map&lt;String, S3StorageConfig&gt; getS3Configurations() {
+<span class="fc" id="L92">    Map&lt;String, S3StorageConfig&gt; s3BucketConfigMap = new HashMap&lt;&gt;();</span>
+<span class="fc" id="L93">    int i = 0;</span>
+    while (true) {
+<span class="fc" id="L95">      String bucketPath = getProperty(&quot;s3.bucketPath.&quot; + i);</span>
+<span class="fc" id="L96">      String region = getProperty(&quot;s3.region.&quot; + i);</span>
+<span class="fc" id="L97">      String awsRoleArn = getProperty(&quot;s3.awsRoleArn.&quot; + i);</span>
+<span class="fc" id="L98">      String accessKey = getProperty(&quot;s3.accessKey.&quot; + i);</span>
+<span class="fc" id="L99">      String secretKey = getProperty(&quot;s3.secretKey.&quot; + i);</span>
+<span class="fc" id="L100">      String sessionToken = getProperty(&quot;s3.sessionToken.&quot; + i);</span>
+<span class="fc" id="L101">      String credentialsGenerator = getProperty(&quot;s3.credentialsGenerator.&quot; + i);</span>
+<span class="pc bpc" id="L102" title="5 of 12 branches missed.">      if ((bucketPath == null || region == null || awsRoleArn == null)</span>
+          &amp;&amp; (accessKey == null || secretKey == null || sessionToken == null)) {
+<span class="nc" id="L104">        break;</span>
+      }
+      S3StorageConfig s3StorageConfig =
+<span class="fc" id="L107">          S3StorageConfig.builder()</span>
+<span class="fc" id="L108">              .bucketPath(bucketPath)</span>
+<span class="fc" id="L109">              .region(region)</span>
+<span class="fc" id="L110">              .awsRoleArn(awsRoleArn)</span>
+<span class="fc" id="L111">              .accessKey(accessKey)</span>
+<span class="fc" id="L112">              .secretKey(secretKey)</span>
+<span class="fc" id="L113">              .sessionToken(sessionToken)</span>
+<span class="fc" id="L114">              .credentialGenerator(credentialsGenerator)</span>
+<span class="fc" id="L115">              .build();</span>
+<span class="fc" id="L116">      s3BucketConfigMap.put(bucketPath, s3StorageConfig);</span>
+<span class="fc" id="L117">      i++;</span>
+<span class="fc" id="L118">    }</span>
+
+<span class="fc" id="L120">    return s3BucketConfigMap;</span>
+  }
+
+  public Map&lt;String, String&gt; getGcsConfigurations() {
+<span class="fc" id="L124">    Map&lt;String, String&gt; gcsConfigMap = new HashMap&lt;&gt;();</span>
+<span class="fc" id="L125">    int i = 0;</span>
+    while (true) {
+<span class="fc" id="L127">      String bucketPath = getProperty(&quot;gcs.bucketPath.&quot; + i);</span>
+<span class="fc" id="L128">      String jsonKeyFilePath = getProperty(&quot;gcs.jsonKeyFilePath.&quot; + i);</span>
+<span class="pc bpc" id="L129" title="3 of 4 branches missed.">      if (bucketPath == null || jsonKeyFilePath == null) {</span>
+<span class="nc" id="L130">        break;</span>
+      }
+<span class="nc" id="L132">      gcsConfigMap.put(bucketPath, jsonKeyFilePath);</span>
+<span class="nc" id="L133">      i++;</span>
+<span class="nc" id="L134">    }</span>
+
+<span class="fc" id="L136">    return gcsConfigMap;</span>
+  }
+
+  public Map&lt;String, ADLSStorageConfig&gt; getAdlsConfigurations() {
+<span class="fc" id="L140">    Map&lt;String, ADLSStorageConfig&gt; adlsConfigMap = new HashMap&lt;&gt;();</span>
+
+<span class="fc" id="L142">    int i = 0;</span>
+    while (true) {
+<span class="fc" id="L144">      String storageAccountName = getProperty(&quot;adls.storageAccountName.&quot; + i);</span>
+<span class="fc" id="L145">      String tenantId = getProperty(&quot;adls.tenantId.&quot; + i);</span>
+<span class="fc" id="L146">      String clientId = getProperty(&quot;adls.clientId.&quot; + i);</span>
+<span class="fc" id="L147">      String clientSecret = getProperty(&quot;adls.clientSecret.&quot; + i);</span>
+<span class="fc" id="L148">      String testMode = getProperty(&quot;adls.testMode.&quot; + i);</span>
+<span class="pc bpc" id="L149" title="7 of 8 branches missed.">      if (storageAccountName == null</span>
+          || tenantId == null
+          || clientId == null
+          || clientSecret == null) {
+<span class="nc" id="L153">        break;</span>
+      }
+<span class="nc" id="L155">      adlsConfigMap.put(</span>
+          storageAccountName,
+<span class="nc" id="L157">          ADLSStorageConfig.builder()</span>
+<span class="nc" id="L158">              .storageAccountName(storageAccountName)</span>
+<span class="nc" id="L159">              .tenantId(tenantId)</span>
+<span class="nc" id="L160">              .clientId(clientId)</span>
+<span class="nc bnc" id="L161" title="All 2 branches missed.">              .clientSecret(clientSecret)</span>
+<span class="nc bnc" id="L162" title="All 2 branches missed.">              .testMode(testMode != null &amp;&amp; testMode.equalsIgnoreCase(&quot;true&quot;))</span>
+<span class="nc" id="L163">              .build());</span>
+<span class="nc" id="L164">      i++;</span>
+<span class="nc" id="L165">    }</span>
+
+<span class="fc" id="L167">    return adlsConfigMap;</span>
+  }
+
+  /**
+   * Get a property value by key.
+   *
+   * &lt;p&gt;The key can be one of the following (in that order) before looking it up in the server
+   * properties:
+   *
+   * &lt;ol&gt;
+   *   &lt;li&gt;System property
+   *   &lt;li&gt;Environment variable
+   *   &lt;li&gt;server.properties file
+   * &lt;/ol&gt;
+   *
+   * &lt;p&gt;If it's not set, the default value is returned.
+   */
+  public String get(Property property) {
+<span class="fc" id="L185">    return getProperty(property.key);</span>
+  }
+
+  /** Get a property value by key name. */
+  private String getProperty(String key) {
+<span class="pc bpc" id="L190" title="1 of 2 branches missed.">    if (System.getProperty(key) != null) {</span>
+<span class="nc" id="L191">      return System.getProperty(key);</span>
+    }
+<span class="pc bpc" id="L193" title="1 of 2 branches missed.">    if (System.getenv().containsKey(key)) {</span>
+<span class="nc" id="L194">      return System.getenv(key);</span>
+    }
+    // Finally try properties. If not found in properties, this would return default value or null
+    // if no default value.
+<span class="fc" id="L198">    return properties.getProperty(key);</span>
+  }
+
+  public void set(Property property, String value) {
+<span class="fc" id="L202">    properties.setProperty(property.key, value);</span>
+<span class="fc" id="L203">  }</span>
+
+  private boolean isTrueOrEnable(String value) {
+<span class="pc bpc" id="L206" title="1 of 6 branches missed.">    return value != null &amp;&amp; (value.equalsIgnoreCase(&quot;true&quot;) || value.equalsIgnoreCase(&quot;enable&quot;));</span>
+  }
+
+  public boolean isAuthorizationEnabled() {
+<span class="fc" id="L210">    return isTrueOrEnable(get(Property.AUTHORIZATION_ENABLED));</span>
+  }
+
+  /**
+   * Check if experimental MANAGED table feature is enabled. This method throws BaseException with
+   * ErrorCode.INVALID_ARGUMENT if it's disabled.
+   */
+  public void checkManagedTableEnabled() {
+<span class="pc bpc" id="L218" title="1 of 2 branches missed.">    if (!isTrueOrEnable(get(Property.MANAGED_TABLE_ENABLED))) {</span>
+<span class="nc" id="L219">      throw new BaseException(</span>
+          ErrorCode.INVALID_ARGUMENT,
+          &quot;MANAGED table is an experimental feature and is currently disabled. &quot;
+              + &quot;To enable it, set 'server.managed-table.enabled=true' in server.properties&quot;);
+    }
+<span class="fc" id="L224">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.7.202105040129</span></div></body></html>

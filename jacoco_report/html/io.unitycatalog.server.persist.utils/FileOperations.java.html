@@ -1,0 +1,284 @@
+<?xml version="1.0" encoding="utf-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>FileOperations.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=2;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Jacoco Coverage Report</a> &gt; <a href="index.source.html" class="el_package">io.unitycatalog.server.persist.utils</a> &gt; <span class="el_source">FileOperations.java</span></div><h1>FileOperations.java</h1><pre class="source lang-java linenums">package io.unitycatalog.server.persist.utils;
+
+import com.amazonaws.auth.AWSStaticCredentialsProvider;
+import com.amazonaws.auth.BasicSessionCredentials;
+import com.amazonaws.services.s3.AmazonS3;
+import com.amazonaws.services.s3.AmazonS3ClientBuilder;
+import com.amazonaws.services.s3.model.ListObjectsRequest;
+import com.amazonaws.services.s3.model.ObjectListing;
+import com.amazonaws.services.s3.model.ObjectMetadata;
+import com.amazonaws.services.s3.model.PutObjectRequest;
+import io.unitycatalog.server.exception.BaseException;
+import io.unitycatalog.server.exception.ErrorCode;
+import io.unitycatalog.server.utils.Constants;
+import io.unitycatalog.server.utils.ServerProperties;
+import io.unitycatalog.server.utils.ServerProperties.Property;
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.nio.file.FileVisitOption;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.Comparator;
+import java.util.stream.Stream;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+public class FileOperations {
+<span class="fc" id="L30">  private static final Logger LOGGER = LoggerFactory.getLogger(FileOperations.class);</span>
+  private final ServerProperties serverProperties;
+  private static String modelStorageRootCached;
+  private static String modelStorageRootPropertyCached;
+
+<span class="fc" id="L35">  public FileOperations(ServerProperties serverProperties) {</span>
+<span class="fc" id="L36">    this.serverProperties = serverProperties;</span>
+<span class="fc" id="L37">  }</span>
+
+  /**
+   * TODO: Deprecate this method once unit tests are self contained and this class gets
+   * re-instantiated with each test. Property updates shouldn't affect the instantiated class and we
+   * should require a server restart if the properties file is updated.
+   */
+  private static void reset() {
+<span class="fc" id="L45">    modelStorageRootPropertyCached = null;</span>
+<span class="fc" id="L46">    modelStorageRootCached = null;</span>
+<span class="fc" id="L47">  }</span>
+
+  // Model specific storage root handlers and convenience methods
+  private String getModelStorageRoot() {
+<span class="fc" id="L51">    String currentModelStorageRoot = serverProperties.get(Property.MODEL_STORAGE_ROOT);</span>
+<span class="fc bfc" id="L52" title="All 2 branches covered.">    if (modelStorageRootPropertyCached != currentModelStorageRoot) {</span>
+      // This means the property has been updated from the previous read, or this is the first time
+      // reading it
+<span class="fc" id="L55">      reset();</span>
+    }
+<span class="fc bfc" id="L57" title="All 2 branches covered.">    if (modelStorageRootCached != null) {</span>
+<span class="fc" id="L58">      return modelStorageRootCached;</span>
+    }
+<span class="fc" id="L60">    String modelStorageRoot = currentModelStorageRoot;</span>
+<span class="pc bpc" id="L61" title="1 of 2 branches missed.">    if (modelStorageRoot == null) {</span>
+      // If the model storage root is empty, use the CWD
+<span class="nc" id="L63">      modelStorageRoot = System.getProperty(&quot;user.dir&quot;);</span>
+    }
+    // If the model storage root is not a valid URI, make it one
+<span class="fc bfc" id="L66" title="All 2 branches covered.">    if (!UriUtils.isValidURI(modelStorageRoot)) {</span>
+      // Convert to an absolute path
+<span class="fc" id="L68">      modelStorageRoot = Paths.get(modelStorageRoot).toUri().toString();</span>
+    }
+    // Check if the modelStorageRoot ends with a slash and remove it if it does
+<span class="fc bfc" id="L71" title="All 2 branches covered.">    while (modelStorageRoot.endsWith(&quot;/&quot;)) {</span>
+<span class="fc" id="L72">      modelStorageRoot = modelStorageRoot.substring(0, modelStorageRoot.length() - 1);</span>
+    }
+<span class="fc" id="L74">    modelStorageRootCached = modelStorageRoot;</span>
+<span class="fc" id="L75">    modelStorageRootPropertyCached = currentModelStorageRoot;</span>
+<span class="fc" id="L76">    return modelStorageRoot;</span>
+  }
+
+  private String getModelDirectoryURI(String entityFullName) {
+<span class="fc" id="L80">    return getModelStorageRoot() + &quot;/&quot; + entityFullName.replace(&quot;.&quot;, &quot;/&quot;);</span>
+  }
+
+  public String getModelStorageLocation(String catalogId, String schemaId, String modelId) {
+<span class="fc" id="L84">    return getModelDirectoryURI(catalogId + &quot;.&quot; + schemaId + &quot;.models.&quot; + modelId);</span>
+  }
+
+  public String getModelVersionStorageLocation(
+      String catalogId, String schemaId, String modelId, String versionId) {
+<span class="fc" id="L89">    return getModelDirectoryURI(</span>
+        catalogId + &quot;.&quot; + schemaId + &quot;.models.&quot; + modelId + &quot;.versions.&quot; + versionId);
+  }
+
+  private static URI createURI(String uri) {
+<span class="pc bpc" id="L94" title="1 of 4 branches missed.">    if (uri.startsWith(&quot;s3://&quot;) || uri.startsWith(&quot;file:&quot;)) {</span>
+<span class="fc" id="L95">      return URI.create(uri);</span>
+    } else {
+<span class="fc" id="L97">      return Paths.get(uri).toUri();</span>
+    }
+  }
+
+  public void deleteDirectory(String path) {
+<span class="fc" id="L102">    URI directoryUri = createURI(path);</span>
+<span class="fc" id="L103">    UriUtils.validateURI(directoryUri);</span>
+<span class="pc bpc" id="L104" title="2 of 4 branches missed.">    if (directoryUri.getScheme() == null || directoryUri.getScheme().equals(&quot;file&quot;)) {</span>
+      try {
+<span class="nc" id="L106">        deleteLocalDirectory(Paths.get(directoryUri));</span>
+<span class="fc" id="L107">      } catch (RuntimeException | IOException e) {</span>
+<span class="fc" id="L108">        throw new BaseException(ErrorCode.INTERNAL, &quot;Failed to delete directory: &quot; + path, e);</span>
+<span class="nc" id="L109">      }</span>
+<span class="nc bnc" id="L110" title="All 2 branches missed.">    } else if (directoryUri.getScheme().equals(&quot;s3&quot;)) {</span>
+<span class="nc" id="L111">      modifyS3Directory(directoryUri, false);</span>
+    } else {
+<span class="nc" id="L113">      throw new BaseException(</span>
+<span class="nc" id="L114">          ErrorCode.INVALID_ARGUMENT, &quot;Unsupported URI scheme: &quot; + directoryUri.getScheme());</span>
+    }
+<span class="nc" id="L116">  }</span>
+
+  private static void deleteLocalDirectory(Path dirPath) throws IOException {
+<span class="pc bpc" id="L119" title="1 of 2 branches missed.">    if (Files.exists(dirPath)) {</span>
+<span class="nc" id="L120">      try (Stream&lt;Path&gt; walk = Files.walk(dirPath, FileVisitOption.FOLLOW_LINKS)) {</span>
+<span class="nc" id="L121">        walk.sorted(Comparator.reverseOrder())</span>
+<span class="nc" id="L122">            .forEach(</span>
+                path -&gt; {
+                  try {
+                    Files.delete(path);
+                  } catch (IOException e) {
+                    throw new RuntimeException(&quot;Failed to delete &quot; + path, e);
+                  }
+                });
+      }
+    } else {
+<span class="fc" id="L132">      throw new IOException(&quot;Directory does not exist: &quot; + dirPath);</span>
+    }
+<span class="nc" id="L134">  }</span>
+
+  private URI modifyS3Directory(URI parsedUri, boolean createOrDelete) {
+<span class="nc" id="L137">    String bucketName = parsedUri.getHost();</span>
+<span class="nc" id="L138">    String path = parsedUri.getPath().substring(1); // Remove leading '/'</span>
+<span class="nc" id="L139">    String accessKey = serverProperties.get(Property.AWS_S3_ACCESS_KEY);</span>
+<span class="nc" id="L140">    String secretKey = serverProperties.get(Property.AWS_S3_SECRET_KEY);</span>
+<span class="nc" id="L141">    String sessionToken = serverProperties.get(Property.AWS_S3_SESSION_TOKEN);</span>
+<span class="nc" id="L142">    String region = serverProperties.get(Property.AWS_REGION);</span>
+
+<span class="nc" id="L144">    BasicSessionCredentials sessionCredentials =</span>
+        new BasicSessionCredentials(accessKey, secretKey, sessionToken);
+    AmazonS3 s3Client =
+<span class="nc" id="L147">        AmazonS3ClientBuilder.standard()</span>
+<span class="nc" id="L148">            .withCredentials(new AWSStaticCredentialsProvider(sessionCredentials))</span>
+<span class="nc" id="L149">            .withRegion(region)</span>
+<span class="nc" id="L150">            .build();</span>
+
+<span class="nc bnc" id="L152" title="All 2 branches missed.">    if (createOrDelete) {</span>
+
+<span class="nc bnc" id="L154" title="All 2 branches missed.">      if (!path.endsWith(&quot;/&quot;)) {</span>
+<span class="nc" id="L155">        path += &quot;/&quot;;</span>
+      }
+<span class="nc bnc" id="L157" title="All 2 branches missed.">      if (s3Client.doesObjectExist(bucketName, path)) {</span>
+<span class="nc" id="L158">        throw new BaseException(ErrorCode.ALREADY_EXISTS, &quot;Directory already exists: &quot; + path);</span>
+      }
+      try {
+        // Create empty content
+<span class="nc" id="L162">        byte[] emptyContent = new byte[0];</span>
+<span class="nc" id="L163">        ByteArrayInputStream emptyContentStream = new ByteArrayInputStream(emptyContent);</span>
+
+        // Set metadata for the empty content
+<span class="nc" id="L166">        ObjectMetadata metadata = new ObjectMetadata();</span>
+<span class="nc" id="L167">        metadata.setContentLength(0);</span>
+<span class="nc" id="L168">        s3Client.putObject(new PutObjectRequest(bucketName, path, emptyContentStream, metadata));</span>
+<span class="nc" id="L169">        LOGGER.debug(&quot;Directory created successfully: {}&quot;, path);</span>
+<span class="nc" id="L170">        return URI.create(String.format(&quot;s3://%s/%s&quot;, bucketName, path));</span>
+<span class="nc" id="L171">      } catch (Exception e) {</span>
+<span class="nc" id="L172">        throw new BaseException(ErrorCode.INTERNAL, &quot;Failed to create directory: &quot; + path, e);</span>
+      }
+    } else {
+      ObjectListing listing;
+<span class="nc" id="L176">      ListObjectsRequest req = new ListObjectsRequest().withBucketName(bucketName).withPrefix(path);</span>
+      do {
+<span class="nc" id="L178">        listing = s3Client.listObjects(req);</span>
+<span class="nc" id="L179">        listing</span>
+<span class="nc" id="L180">            .getObjectSummaries()</span>
+<span class="nc" id="L181">            .forEach(</span>
+                object -&gt; {
+                  s3Client.deleteObject(bucketName, object.getKey());
+                });
+<span class="nc" id="L185">        req.setMarker(listing.getNextMarker());</span>
+<span class="nc bnc" id="L186" title="All 2 branches missed.">      } while (listing.isTruncated());</span>
+<span class="nc" id="L187">      return URI.create(String.format(&quot;s3://%s/%s&quot;, bucketName, path));</span>
+    }
+  }
+
+  /**
+   * This helper function adjusts local file URI that starts with file:/ or file:// but not with
+   * file:///. This function makes sure these URIs must begin with file:/// in order to be a valid
+   * local file URI.
+   */
+  private static URI adjustLocalFileURI(URI fileUri) {
+<span class="fc" id="L197">    String uriString = fileUri.toString();</span>
+    // Ensure the URI starts with &quot;file:///&quot; for absolute paths
+<span class="pc bpc" id="L199" title="1 of 4 branches missed.">    if (uriString.startsWith(&quot;file:/&quot;) &amp;&amp; !uriString.startsWith(&quot;file:///&quot;)) {</span>
+<span class="fc" id="L200">      uriString = &quot;file://&quot; + uriString.substring(5);</span>
+    }
+<span class="fc" id="L202">    return URI.create(uriString);</span>
+  }
+
+  public static void assertValidLocation(String location) {
+<span class="fc" id="L206">    UriUtils.validateURI(URI.create(location));</span>
+<span class="fc" id="L207">  }</span>
+
+  /**
+   * Converts a given input path or URI into a standardized URI string. This method ensures that
+   * local file paths are correctly formatted as file URIs and that URIs for different storage
+   * providers (e.g., S3, Azure, GCS) are handled appropriately.
+   *
+   * &lt;p&gt;If the input is a valid URI with a recognized scheme (e.g., &quot;file&quot;, &quot;s3&quot;, &quot;abfs&quot;, etc.), the
+   * method returns a standardized version of the URI. If the input is not a valid URI, it treats
+   * the input as a local file path and converts it to a &quot;file://&quot; URI.
+   *
+   * @param inputPath the input path or URI to be standardized.
+   * @return the standardized URI string.
+   * @throws BaseException if the input path has an unsupported URI scheme.
+   *     &lt;p&gt;Examples of input and output:
+   *     &lt;pre&gt;
+   * // Local File System Example:
+   * &quot;file:/tmp/myfile&quot;         -&gt; &quot;file:///tmp/myfile&quot;
+   *
+   * // AWS S3 Example:
+   * &quot;s3://my-bucket/my-file&quot;   -&gt; &quot;s3://my-bucket/my-file&quot;
+   *
+   * // Azure Blob Storage Example:
+   * &quot;abfs://my-container@my-storage.dfs.core.windows.net/my-file&quot;
+   *                          -&gt; &quot;abfs://my-container@my-storage.dfs.core.windows.net/my-file&quot;
+   *
+   * // Google Cloud Storage Example:
+   * &quot;gs://my-bucket/my-file&quot;   -&gt; &quot;gs://my-bucket/my-file&quot;
+   *
+   * // Invalid Path Example (treated as a file path):
+   * &quot;/local/path/to/file&quot;      -&gt; &quot;file:///local/path/to/file&quot;
+   *
+   * // Unsupported Scheme Example:
+   * &quot;ftp://example.com/file&quot;   -&gt; Throws BaseException with message: &quot;Unsupported URI scheme: ftp&quot;
+   * &lt;/pre&gt;
+   */
+  public static String toStandardizedURIString(String inputPath) {
+    // Check if the path is already a URI with a valid scheme
+    URI uri;
+    try {
+<span class="fc" id="L247">      uri = new URI(inputPath);</span>
+<span class="nc" id="L248">    } catch (URISyntaxException e) {</span>
+<span class="nc" id="L249">      throw new BaseException(ErrorCode.INVALID_ARGUMENT, &quot;Unsupported path: &quot; + inputPath);</span>
+<span class="fc" id="L250">    }</span>
+    // If it's a file URI, standardize it
+<span class="fc bfc" id="L252" title="All 2 branches covered.">    if (uri.getScheme() != null) {</span>
+<span class="fc bfc" id="L253" title="All 2 branches covered.">      if (uri.getScheme().equals(Constants.URI_SCHEME_FILE)) {</span>
+<span class="fc" id="L254">        return adjustLocalFileURI(uri).toString();</span>
+<span class="fc bfc" id="L255" title="All 2 branches covered.">      } else if (Constants.SUPPORTED_CLOUD_SCHEMES.contains(uri.getScheme())) {</span>
+<span class="fc" id="L256">        return uri.toString();</span>
+      } else {
+<span class="fc" id="L258">        throw new BaseException(</span>
+<span class="fc" id="L259">            ErrorCode.INVALID_ARGUMENT, &quot;Unsupported URI scheme: &quot; + uri.getScheme());</span>
+      }
+    }
+<span class="fc" id="L262">    String localUri = Paths.get(inputPath).toUri().toString();</span>
+<span class="pc bpc" id="L263" title="1 of 4 branches missed.">    if (!inputPath.endsWith(&quot;/&quot;) &amp;&amp; localUri.endsWith(&quot;/&quot;)) {</span>
+      // A special case where the local inputPath is a directory already exist, generated localUri
+      // will have an extra trailing slash. Remove it to make it consistent.
+<span class="fc" id="L266">      localUri = localUri.substring(0, localUri.length() - 1);</span>
+    }
+<span class="fc" id="L268">    return localUri;</span>
+  }
+
+  private String getManagedTablesStorageRoot() {
+    // Use local tmp directory as default storage root
+<span class="fc" id="L273">    return serverProperties.get(Property.TABLE_STORAGE_ROOT);</span>
+  }
+
+  /**
+   * This function does not actually create a directory. But it only returns the constructed path.
+   */
+  public String createTableDirectory(String tableId) {
+<span class="fc" id="L280">    String directoryUriString = getManagedTablesStorageRoot() + &quot;/tables/&quot; + tableId;</span>
+<span class="fc" id="L281">    return toStandardizedURIString(directoryUriString);</span>
+  }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.7.202105040129</span></div></body></html>

@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="utf-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DeltaCommitDAO.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=2;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Jacoco Coverage Report</a> &gt; <a href="index.source.html" class="el_package">io.unitycatalog.server.persist.dao</a> &gt; <span class="el_source">DeltaCommitDAO.java</span></div><h1>DeltaCommitDAO.java</h1><pre class="source lang-java linenums">package io.unitycatalog.server.persist.dao;
+
+import io.unitycatalog.server.model.DeltaCommitInfo;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.Id;
+import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
+import java.util.Date;
+import java.util.UUID;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import lombok.Setter;
+import org.hibernate.annotations.UuidGenerator;
+
+@Entity
+@Table(
+    name = &quot;uc_delta_commits&quot;,
+    uniqueConstraints = {@UniqueConstraint(columnNames = {&quot;table_id&quot;, &quot;commit_version&quot;})})
+// Lombok
+@Getter
+<span class="nc" id="L24">@Setter</span>
+<span class="pc" id="L25">@Builder</span>
+<span class="fc" id="L26">@AllArgsConstructor</span>
+<span class="fc" id="L27">@NoArgsConstructor</span>
+public class DeltaCommitDAO {
+  // This id is never used to identify a commit. We only look for commits by table_id and
+  // optionally commit_version. But this is a required field as a unique ID in the database.
+  @Id
+  @UuidGenerator
+  @Column(name = &quot;id&quot;, columnDefinition = &quot;BINARY(16)&quot;)
+<span class="nc" id="L34">  private UUID id;</span>
+
+  @Column(name = &quot;table_id&quot;, nullable = false, columnDefinition = &quot;BINARY(16)&quot;)
+<span class="nc" id="L37">  private UUID tableId;</span>
+
+  @Column(name = &quot;commit_version&quot;, nullable = false)
+<span class="fc" id="L40">  private long commitVersion;</span>
+
+  @Column(name = &quot;commit_filename&quot;, nullable = false)
+<span class="fc" id="L43">  private String commitFilename;</span>
+
+  @Column(name = &quot;commit_filesize&quot;, nullable = false)
+<span class="fc" id="L46">  private long commitFilesize;</span>
+
+  @Column(name = &quot;commit_file_modification_timestamp&quot;, nullable = false)
+<span class="fc" id="L49">  private Date commitFileModificationTimestamp;</span>
+
+  @Column(name = &quot;commit_timestamp&quot;, nullable = false)
+<span class="nc" id="L52">  private Date commitTimestamp;</span>
+
+  @Column(name = &quot;is_backfilled_latest_commit&quot;, nullable = false)
+<span class="fc" id="L55">  private boolean isBackfilledLatestCommit;</span>
+
+  public static DeltaCommitDAO from(UUID tableId, DeltaCommitInfo commitInfo) {
+<span class="fc" id="L58">    return DeltaCommitDAO.builder()</span>
+<span class="fc" id="L59">        .tableId(tableId)</span>
+<span class="fc" id="L60">        .commitVersion(commitInfo.getVersion())</span>
+<span class="fc" id="L61">        .commitFilename(commitInfo.getFileName())</span>
+<span class="fc" id="L62">        .commitFilesize(commitInfo.getFileSize())</span>
+<span class="fc" id="L63">        .commitFileModificationTimestamp(new Date(commitInfo.getFileModificationTimestamp()))</span>
+<span class="fc" id="L64">        .commitTimestamp(new Date(commitInfo.getTimestamp()))</span>
+<span class="fc" id="L65">        .isBackfilledLatestCommit(false)</span>
+<span class="fc" id="L66">        .build();</span>
+  }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.7.202105040129</span></div></body></html>

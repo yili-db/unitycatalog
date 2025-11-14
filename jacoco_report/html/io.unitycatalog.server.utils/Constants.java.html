@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>Constants.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=2;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Jacoco Coverage Report</a> &gt; <a href="index.source.html" class="el_package">io.unitycatalog.server.utils</a> &gt; <span class="el_source">Constants.java</span></div><h1>Constants.java</h1><pre class="source lang-java linenums">package io.unitycatalog.server.utils;
+
+import java.util.Set;
+
+<span class="nc" id="L5">public class Constants {</span>
+  public static final String CATALOG = &quot;catalog&quot;;
+  public static final String SCHEMA = &quot;schema&quot;;
+  public static final String TABLE = &quot;table&quot;;
+  public static final String FUNCTION = &quot;function&quot;;
+
+  public static final String URI_SCHEME_ABFS = &quot;abfs&quot;;
+  public static final String URI_SCHEME_ABFSS = &quot;abfss&quot;;
+  public static final String URI_SCHEME_GS = &quot;gs&quot;;
+  public static final String URI_SCHEME_S3 = &quot;s3&quot;;
+<span class="fc" id="L15">  public static final Set&lt;String&gt; SUPPORTED_CLOUD_SCHEMES =</span>
+<span class="fc" id="L16">      Set.of(URI_SCHEME_S3, URI_SCHEME_GS, URI_SCHEME_ABFSS, URI_SCHEME_ABFS);</span>
+  public static final String URI_SCHEME_FILE = &quot;file&quot;;
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.7.202105040129</span></div></body></html>

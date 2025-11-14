@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ValidationUtils.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=2;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Jacoco Coverage Report</a> &gt; <a href="index.source.html" class="el_package">io.unitycatalog.server.utils</a> &gt; <span class="el_source">ValidationUtils.java</span></div><h1>ValidationUtils.java</h1><pre class="source lang-java linenums">package io.unitycatalog.server.utils;
+
+import io.unitycatalog.server.exception.BaseException;
+import io.unitycatalog.server.exception.ErrorCode;
+import java.util.regex.Pattern;
+
+<span class="nc" id="L7">public class ValidationUtils {</span>
+  // Regex to allow only alphanumeric characters, underscores, hyphens, and @ signs
+<span class="fc" id="L9">  private static final Pattern VALID_FORMAT = Pattern.compile(&quot;[a-zA-Z0-9_@-]+&quot;);</span>
+<span class="fc" id="L10">  private static final Integer MAX_NAME_LENGTH = 255;</span>
+
+  public static void validateSqlObjectName(String name) {
+<span class="pc bpc" id="L13" title="2 of 4 branches missed.">    if (name == null || name.isEmpty()) {</span>
+<span class="nc" id="L14">      throw new BaseException(ErrorCode.INVALID_ARGUMENT, &quot;Name cannot be empty&quot;);</span>
+    }
+<span class="pc bpc" id="L16" title="1 of 2 branches missed.">    if (name.length() &gt; MAX_NAME_LENGTH) {</span>
+<span class="nc" id="L17">      throw new BaseException(</span>
+          ErrorCode.INVALID_ARGUMENT,
+          &quot;Name cannot be longer than &quot; + MAX_NAME_LENGTH + &quot; characters&quot;);
+    }
+<span class="fc bfc" id="L21" title="All 2 branches covered.">    if (!VALID_FORMAT.matcher(name).matches()) {</span>
+<span class="fc" id="L22">      throw new BaseException(</span>
+          ErrorCode.INVALID_ARGUMENT,
+          &quot;Name cannot contain a period, space, forward-slash, or control characters&quot;);
+    }
+<span class="fc" id="L26">  }</span>
+
+  /**
+   * Checks that the specified condition is true. If not, throws a BaseException with
+   * INVALID_ARGUMENT error code and the specified message.
+   *
+   * &lt;p&gt;This method is similar to Guava's Preconditions.checkArgument but throws BaseException
+   * instead of IllegalArgumentException.
+   *
+   * @param condition the condition to check
+   * @param message the exception message to use if the check fails
+   * @throws BaseException with INVALID_ARGUMENT if condition is false
+   */
+  public static void checkArgument(boolean condition, String message) {
+<span class="fc bfc" id="L40" title="All 2 branches covered.">    if (!condition) {</span>
+<span class="fc" id="L41">      throw new BaseException(ErrorCode.INVALID_ARGUMENT, message);</span>
+    }
+<span class="fc" id="L43">  }</span>
+
+  /**
+   * Checks that the specified condition is true. If not, throws a BaseException with
+   * INVALID_ARGUMENT error code and a formatted message.
+   *
+   * @param condition the condition to check
+   * @param messageTemplate the template for the exception message with %s placeholders
+   * @param messageArgs the arguments to be substituted into the message template
+   * @throws BaseException with INVALID_ARGUMENT if condition is false
+   */
+  public static void checkArgument(
+      boolean condition, String messageTemplate, Object... messageArgs) {
+<span class="fc bfc" id="L56" title="All 2 branches covered.">    if (!condition) {</span>
+<span class="fc" id="L57">      throw new BaseException(</span>
+<span class="fc" id="L58">          ErrorCode.INVALID_ARGUMENT, String.format(messageTemplate, messageArgs));</span>
+    }
+<span class="fc" id="L60">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.7.202105040129</span></div></body></html>

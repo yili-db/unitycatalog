@@ -1,0 +1,247 @@
+<?xml version="1.0" encoding="utf-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>IcebergRestCatalogService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=2;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Jacoco Coverage Report</a> &gt; <a href="index.source.html" class="el_package">io.unitycatalog.server.service</a> &gt; <span class="el_source">IcebergRestCatalogService.java</span></div><h1>IcebergRestCatalogService.java</h1><pre class="source lang-java linenums">package io.unitycatalog.server.service;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.linecorp.armeria.common.AggregatedHttpResponse;
+import com.linecorp.armeria.common.HttpResponse;
+import com.linecorp.armeria.common.HttpStatus;
+import com.linecorp.armeria.server.annotation.ExceptionHandler;
+import com.linecorp.armeria.server.annotation.Get;
+import com.linecorp.armeria.server.annotation.Head;
+import com.linecorp.armeria.server.annotation.Param;
+import com.linecorp.armeria.server.annotation.Post;
+import com.linecorp.armeria.server.annotation.ProducesJson;
+import io.unitycatalog.server.exception.IcebergRestExceptionHandler;
+import io.unitycatalog.server.model.ListSchemasResponse;
+import io.unitycatalog.server.model.ListTablesResponse;
+import io.unitycatalog.server.model.SchemaInfo;
+import io.unitycatalog.server.persist.Repositories;
+import io.unitycatalog.server.persist.TableRepository;
+import io.unitycatalog.server.service.iceberg.MetadataService;
+import io.unitycatalog.server.service.iceberg.TableConfigService;
+import io.unitycatalog.server.utils.JsonUtils;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.stream.Collectors;
+import org.apache.iceberg.TableMetadata;
+import org.apache.iceberg.catalog.Namespace;
+import org.apache.iceberg.catalog.TableIdentifier;
+import org.apache.iceberg.exceptions.BadRequestException;
+import org.apache.iceberg.exceptions.NoSuchTableException;
+import org.apache.iceberg.exceptions.NoSuchViewException;
+import org.apache.iceberg.rest.Endpoint;
+import org.apache.iceberg.rest.responses.ConfigResponse;
+import org.apache.iceberg.rest.responses.GetNamespaceResponse;
+import org.apache.iceberg.rest.responses.ListNamespacesResponse;
+import org.apache.iceberg.rest.responses.LoadTableResponse;
+import org.apache.iceberg.rest.responses.LoadViewResponse;
+import org.hibernate.Session;
+import org.hibernate.SessionFactory;
+
+<span class="pc bpc" id="L43" title="1 of 2 branches missed.">@ExceptionHandler(IcebergRestExceptionHandler.class)</span>
+public class IcebergRestCatalogService {
+
+  private static final String PREFIX_BASE = &quot;catalogs/&quot;;
+
+<span class="fc" id="L48">  private static final List&lt;Endpoint&gt; ENDPOINTS =</span>
+<span class="fc" id="L49">      List.of(</span>
+          Endpoint.V1_LIST_NAMESPACES,
+          Endpoint.V1_LOAD_NAMESPACE,
+          Endpoint.V1_TABLE_EXISTS,
+          Endpoint.V1_LOAD_TABLE,
+          Endpoint.V1_LOAD_VIEW,
+          Endpoint.V1_REPORT_METRICS,
+          Endpoint.V1_LIST_TABLES);
+
+  private final CatalogService catalogService;
+  private final SchemaService schemaService;
+  private final TableService tableService;
+  private final TableConfigService tableConfigService;
+  private final MetadataService metadataService;
+  private final TableRepository tableRepository;
+  private final SessionFactory sessionFactory;
+
+  public IcebergRestCatalogService(
+      CatalogService catalogService,
+      SchemaService schemaService,
+      TableService tableService,
+      TableConfigService tableConfigService,
+      MetadataService metadataService,
+<span class="fc" id="L72">      Repositories repositories) {</span>
+<span class="fc" id="L73">    this.catalogService = catalogService;</span>
+<span class="fc" id="L74">    this.schemaService = schemaService;</span>
+<span class="fc" id="L75">    this.tableService = tableService;</span>
+<span class="fc" id="L76">    this.tableConfigService = tableConfigService;</span>
+<span class="fc" id="L77">    this.metadataService = metadataService;</span>
+<span class="fc" id="L78">    this.tableRepository = repositories.getTableRepository();</span>
+<span class="fc" id="L79">    this.sessionFactory = repositories.getSessionFactory();</span>
+<span class="fc" id="L80">  }</span>
+
+  // Config APIs
+
+  @Get(&quot;/v1/config&quot;)
+  @ProducesJson
+  public ConfigResponse config(@Param(&quot;warehouse&quot;) Optional&lt;String&gt; catalogOpt) {
+<span class="fc" id="L87">    String catalog =</span>
+<span class="fc" id="L88">        catalogOpt.orElseThrow(</span>
+            () -&gt; new BadRequestException(&quot;Must supply a proper catalog in warehouse property.&quot;));
+
+    // TODO: check catalog exists
+    // set catalog prefix
+<span class="fc" id="L93">    return ConfigResponse.builder()</span>
+<span class="fc" id="L94">        .withOverride(&quot;prefix&quot;, PREFIX_BASE + catalog)</span>
+<span class="fc" id="L95">        .withEndpoints(ENDPOINTS)</span>
+<span class="fc" id="L96">        .build();</span>
+  }
+
+  // Namespace APIs
+
+  @Get(&quot;/v1/catalogs/{catalog}/namespaces&quot;)
+  @ProducesJson
+  public ListNamespacesResponse listNamespaces(
+      @Param(&quot;catalog&quot;) String catalog, @Param(&quot;parent&quot;) Optional&lt;String&gt; parent)
+      throws JsonProcessingException {
+    List&lt;Namespace&gt; namespaces;
+<span class="pc bpc" id="L107" title="3 of 4 branches missed.">    if (parent.isPresent() &amp;&amp; !parent.get().isEmpty()) {</span>
+      // nested namespaces is not supported, so child namespaces will be empty
+<span class="nc" id="L109">      namespaces = Collections.emptyList();</span>
+    } else {
+<span class="fc" id="L111">      String respContent =</span>
+          schemaService
+<span class="fc" id="L113">              .listSchemas(catalog, Optional.of(Integer.MAX_VALUE), Optional.empty())</span>
+<span class="fc" id="L114">              .aggregate()</span>
+<span class="fc" id="L115">              .join()</span>
+<span class="fc" id="L116">              .contentUtf8();</span>
+      ListSchemasResponse resp =
+<span class="fc" id="L118">          JsonUtils.getInstance().readValue(respContent, ListSchemasResponse.class);</span>
+<span class="pc bpc" id="L119" title="2 of 4 branches missed.">      assert resp.getSchemas() != null;</span>
+<span class="fc" id="L120">      namespaces =</span>
+<span class="fc" id="L121">          resp.getSchemas().stream()</span>
+<span class="fc" id="L122">              .map(schemaInfo -&gt; Namespace.of(schemaInfo.getName()))</span>
+<span class="fc" id="L123">              .collect(Collectors.toList());</span>
+    }
+
+<span class="fc" id="L126">    return ListNamespacesResponse.builder().addAll(namespaces).build();</span>
+  }
+
+  @Get(&quot;/v1/catalogs/{catalog}/namespaces/{namespace}&quot;)
+  @ProducesJson
+  public GetNamespaceResponse getNamespace(
+      @Param(&quot;catalog&quot;) String catalog, @Param(&quot;namespace&quot;) String namespace)
+      throws JsonProcessingException {
+<span class="fc" id="L134">    String schemaFullName = String.join(&quot;.&quot;, catalog, namespace);</span>
+<span class="fc" id="L135">    String resp = schemaService.getSchema(schemaFullName).aggregate().join().contentUtf8();</span>
+<span class="fc" id="L136">    return GetNamespaceResponse.builder()</span>
+<span class="fc" id="L137">        .withNamespace(Namespace.of(namespace))</span>
+<span class="fc" id="L138">        .setProperties(JsonUtils.getInstance().readValue(resp, SchemaInfo.class).getProperties())</span>
+<span class="fc" id="L139">        .build();</span>
+  }
+
+  // Table APIs
+
+  @Head(&quot;/v1/catalogs/{catalog}/namespaces/{namespace}/tables/{table}&quot;)
+  public HttpResponse tableExists(
+      @Param(&quot;catalog&quot;) String catalog,
+      @Param(&quot;namespace&quot;) String namespace,
+      @Param(&quot;table&quot;) String table) {
+<span class="fc" id="L149">    try (Session session = sessionFactory.openSession()) {</span>
+<span class="fc" id="L150">      tableRepository.getTable(catalog + &quot;.&quot; + namespace + &quot;.&quot; + table);</span>
+<span class="fc" id="L151">      String metadataLocation =</span>
+<span class="fc" id="L152">          tableRepository.getTableUniformMetadataLocation(session, catalog, namespace, table);</span>
+<span class="fc bfc" id="L153" title="All 2 branches covered.">      if (metadataLocation == null) {</span>
+<span class="fc" id="L154">        throw new NoSuchTableException(&quot;Table does not exist: %s&quot;, namespace + &quot;.&quot; + table);</span>
+      } else {
+<span class="fc" id="L156">        return HttpResponse.of(HttpStatus.OK);</span>
+      }
+    }
+  }
+
+  @Get(&quot;/v1/catalogs/{catalog}/namespaces/{namespace}/tables/{table}&quot;)
+  @ProducesJson
+  public LoadTableResponse loadTable(
+      @Param(&quot;catalog&quot;) String catalog,
+      @Param(&quot;namespace&quot;) String namespace,
+      @Param(&quot;table&quot;) String table) {
+    String metadataLocation;
+<span class="fc" id="L168">    try (Session session = sessionFactory.openSession()) {</span>
+<span class="fc" id="L169">      tableRepository.getTable(catalog + &quot;.&quot; + namespace + &quot;.&quot; + table);</span>
+<span class="fc" id="L170">      metadataLocation =</span>
+<span class="fc" id="L171">          tableRepository.getTableUniformMetadataLocation(session, catalog, namespace, table);</span>
+    }
+
+<span class="fc bfc" id="L174" title="All 2 branches covered.">    if (metadataLocation == null) {</span>
+<span class="fc" id="L175">      throw new NoSuchTableException(&quot;Table does not exist: %s&quot;, namespace + &quot;.&quot; + table);</span>
+    }
+
+<span class="fc" id="L178">    TableMetadata tableMetadata = metadataService.readTableMetadata(metadataLocation);</span>
+<span class="fc" id="L179">    Map&lt;String, String&gt; config = tableConfigService.getTableConfig(tableMetadata);</span>
+
+<span class="fc" id="L181">    return LoadTableResponse.builder()</span>
+<span class="fc" id="L182">        .withTableMetadata(tableMetadata)</span>
+<span class="fc" id="L183">        .addAllConfig(config)</span>
+<span class="fc" id="L184">        .build();</span>
+  }
+
+  @Get(&quot;/v1/catalogs/{catalog}/namespaces/{namespace}/views/{view}&quot;)
+  @ProducesJson
+  public LoadViewResponse loadView(
+      @Param(&quot;namespace&quot;) String namespace, @Param(&quot;view&quot;) String view) {
+    // this is not supported yet, but Iceberg REST client tries to load
+    // a table with given path name and then tries to load a view with that
+    // name if it didn't find a table, so for now, let's just return a 404
+    // as that should be expected since it didn't find a table with the name
+<span class="nc" id="L195">    throw new NoSuchViewException(&quot;View does not exist: %s&quot;, namespace + &quot;.&quot; + view);</span>
+  }
+
+  @Post(&quot;/v1/catalogs/{catalog}/namespaces/{namespace}/tables/{table}/metrics&quot;)
+  public HttpResponse reportMetrics(
+      @Param(&quot;namespace&quot;) String namespace, @Param(&quot;table&quot;) String table) {
+<span class="nc" id="L201">    return HttpResponse.of(HttpStatus.OK);</span>
+  }
+
+  @Get(&quot;/v1/catalogs/{catalog}/namespaces/{namespace}/tables&quot;)
+  @ProducesJson
+  public org.apache.iceberg.rest.responses.ListTablesResponse listTables(
+      @Param(&quot;catalog&quot;) String catalog, @Param(&quot;namespace&quot;) String namespace)
+      throws JsonProcessingException {
+<span class="fc" id="L209">    AggregatedHttpResponse resp =</span>
+        tableService
+<span class="fc" id="L211">            .listTables(</span>
+                catalog,
+                namespace,
+<span class="fc" id="L214">                Optional.of(Integer.MAX_VALUE),</span>
+<span class="fc" id="L215">                Optional.empty(),</span>
+<span class="fc" id="L216">                Optional.empty(),</span>
+<span class="fc" id="L217">                Optional.empty())</span>
+<span class="fc" id="L218">            .aggregate()</span>
+<span class="fc" id="L219">            .join();</span>
+    List&lt;TableIdentifier&gt; filteredTables;
+<span class="fc" id="L221">    try (Session session = sessionFactory.openSession()) {</span>
+      filteredTables =
+<span class="fc" id="L223">          Objects.requireNonNull(</span>
+<span class="fc" id="L224">                  JsonUtils.getInstance()</span>
+<span class="fc" id="L225">                      .readValue(resp.contentUtf8(), ListTablesResponse.class)</span>
+<span class="fc" id="L226">                      .getTables())</span>
+<span class="fc" id="L227">              .stream()</span>
+<span class="fc" id="L228">              .filter(</span>
+                  tableInfo -&gt; {
+                    String metadataLocation =
+                        tableRepository.getTableUniformMetadataLocation(
+                            session, catalog, namespace, tableInfo.getName());
+                    return metadataLocation != null;
+                  })
+<span class="fc" id="L235">              .map(</span>
+                  tableInfo -&gt;
+                      TableIdentifier.of(
+                          Namespace.of(tableInfo.getSchemaName()), tableInfo.getName()))
+<span class="fc" id="L239">              .collect(Collectors.toList());</span>
+    }
+
+<span class="fc" id="L242">    return org.apache.iceberg.rest.responses.ListTablesResponse.builder()</span>
+<span class="fc" id="L243">        .addAll(filteredTables)</span>
+<span class="fc" id="L244">        .build();</span>
+  }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.7.202105040129</span></div></body></html>

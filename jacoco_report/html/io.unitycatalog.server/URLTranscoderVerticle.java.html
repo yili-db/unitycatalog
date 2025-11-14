@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="utf-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>URLTranscoderVerticle.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=2;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Jacoco Coverage Report</a> &gt; <a href="index.source.html" class="el_package">io.unitycatalog.server</a> &gt; <span class="el_source">URLTranscoderVerticle.java</span></div><h1>URLTranscoderVerticle.java</h1><pre class="source lang-java linenums">package io.unitycatalog.server;
+
+import io.vertx.core.AbstractVerticle;
+import io.vertx.core.buffer.Buffer;
+import io.vertx.core.http.HttpMethod;
+import io.vertx.core.http.HttpServer;
+import io.vertx.core.http.HttpServerResponse;
+import io.vertx.ext.web.client.HttpRequest;
+import io.vertx.ext.web.client.WebClient;
+import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/** URL transcoder. */
+class URLTranscoderVerticle extends AbstractVerticle {
+
+<span class="nc" id="L17">  private static final Logger LOGGER = LoggerFactory.getLogger(URLTranscoderVerticle.class);</span>
+
+  private final int transcodePort;
+  private final int servicePort;
+
+<span class="nc" id="L22">  URLTranscoderVerticle(int transcodePort, int servicePort) {</span>
+<span class="nc" id="L23">    this.transcodePort = transcodePort;</span>
+<span class="nc" id="L24">    this.servicePort = servicePort;</span>
+<span class="nc" id="L25">  }</span>
+
+  @Override
+  public void start() {
+<span class="nc" id="L29">    HttpServer server = vertx.createHttpServer();</span>
+<span class="nc" id="L30">    WebClient client = WebClient.create(vertx);</span>
+
+<span class="nc" id="L32">    server.requestHandler(</span>
+        transcodeRequest -&gt; {
+          transcodeRequest
+              .body()
+              .compose(
+                  buffer -&gt; {
+                    HttpMethod method = transcodeRequest.method();
+                    String host = &quot;127.0.0.1&quot;;
+                    String path = transcodeRequest.path().replace(&quot;%1F&quot;, &quot;.&quot;);
+                    HttpRequest&lt;Buffer&gt; serviceRequest =
+                        client.request(method, servicePort, host, path);
+                    serviceRequest.putHeaders(transcodeRequest.headers());
+                    for (Map.Entry&lt;String, String&gt; entry : transcodeRequest.params()) {
+                      serviceRequest.addQueryParam(
+                          entry.getKey(), entry.getValue().replace('\u001f', '.'));
+                    }
+                    return serviceRequest.sendBuffer(buffer);
+                  })
+              .compose(
+                  resp -&gt; {
+                    HttpServerResponse transcodeResp = transcodeRequest.response();
+                    transcodeResp.setStatusCode(resp.statusCode());
+                    for (Map.Entry&lt;String, String&gt; entry : resp.headers()) {
+                      transcodeResp.putHeader(entry.getKey(), entry.getValue());
+                    }
+                    return transcodeResp.end(resp.bodyAsBuffer());
+                  });
+        });
+
+<span class="nc" id="L61">    server.listen(</span>
+        transcodePort,
+        ar -&gt; {
+          if (ar.succeeded()) {
+            LOGGER.info(&quot;URL transcoder started on port {}&quot;, transcodePort);
+          } else {
+            LOGGER.info(&quot;Failed to start URL transcoder: {}&quot;, String.valueOf(ar.cause()));
+          }
+        });
+<span class="nc" id="L70">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.7.202105040129</span></div></body></html>

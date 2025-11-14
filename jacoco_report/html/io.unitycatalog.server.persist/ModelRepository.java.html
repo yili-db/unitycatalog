@@ -1,0 +1,824 @@
+<?xml version="1.0" encoding="utf-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ModelRepository.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=2;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Jacoco Coverage Report</a> &gt; <a href="index.source.html" class="el_package">io.unitycatalog.server.persist</a> &gt; <span class="el_source">ModelRepository.java</span></div><h1>ModelRepository.java</h1><pre class="source lang-java linenums">package io.unitycatalog.server.persist;
+
+import io.unitycatalog.server.exception.BaseException;
+import io.unitycatalog.server.exception.ErrorCode;
+import io.unitycatalog.server.model.CreateModelVersion;
+import io.unitycatalog.server.model.CreateRegisteredModel;
+import io.unitycatalog.server.model.FinalizeModelVersion;
+import io.unitycatalog.server.model.ListModelVersionsResponse;
+import io.unitycatalog.server.model.ListRegisteredModelsResponse;
+import io.unitycatalog.server.model.ModelVersionInfo;
+import io.unitycatalog.server.model.ModelVersionStatus;
+import io.unitycatalog.server.model.RegisteredModelInfo;
+import io.unitycatalog.server.model.UpdateModelVersion;
+import io.unitycatalog.server.model.UpdateRegisteredModel;
+import io.unitycatalog.server.persist.dao.CatalogInfoDAO;
+import io.unitycatalog.server.persist.dao.ModelVersionInfoDAO;
+import io.unitycatalog.server.persist.dao.RegisteredModelInfoDAO;
+import io.unitycatalog.server.persist.dao.SchemaInfoDAO;
+import io.unitycatalog.server.persist.utils.FileOperations;
+import io.unitycatalog.server.persist.utils.PagedListingHelper;
+import io.unitycatalog.server.persist.utils.RepositoryUtils;
+import io.unitycatalog.server.persist.utils.UriUtils;
+import io.unitycatalog.server.utils.IdentityUtils;
+import io.unitycatalog.server.utils.ValidationUtils;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+import org.hibernate.Session;
+import org.hibernate.SessionFactory;
+import org.hibernate.Transaction;
+import org.hibernate.query.Query;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+public class ModelRepository {
+<span class="fc" id="L38">  private static final Logger LOGGER = LoggerFactory.getLogger(ModelRepository.class);</span>
+  private final SessionFactory sessionFactory;
+  private final Repositories repositories;
+  private final FileOperations fileOperations;
+<span class="fc" id="L42">  private static final PagedListingHelper&lt;RegisteredModelInfoDAO&gt; REGISTERED_MODEL_LISTING_HELPER =</span>
+      new PagedListingHelper&lt;&gt;(RegisteredModelInfoDAO.class);
+
+<span class="fc" id="L45">  public ModelRepository(Repositories repositories, SessionFactory sessionFactory) {</span>
+<span class="fc" id="L46">    this.repositories = repositories;</span>
+<span class="fc" id="L47">    this.sessionFactory = sessionFactory;</span>
+<span class="fc" id="L48">    this.fileOperations = repositories.getFileOperations();</span>
+<span class="fc" id="L49">  }</span>
+
+  /** **************** DAO retrieval methods ***************** */
+  public RegisteredModelInfoDAO getRegisteredModelDao(Session session, UUID schemaId, String name) {
+<span class="fc" id="L53">    String hql = &quot;FROM RegisteredModelInfoDAO t WHERE t.schemaId = :schemaId AND t.name = :name&quot;;</span>
+<span class="fc" id="L54">    Query&lt;RegisteredModelInfoDAO&gt; query = session.createQuery(hql, RegisteredModelInfoDAO.class);</span>
+<span class="fc" id="L55">    query.setParameter(&quot;schemaId&quot;, schemaId);</span>
+<span class="fc" id="L56">    query.setParameter(&quot;name&quot;, name);</span>
+<span class="fc" id="L57">    query.setMaxResults(1);</span>
+<span class="fc" id="L58">    LOGGER.info(&quot;Finding registered model by schemaId: {} and name: {}&quot;, schemaId, name);</span>
+<span class="fc" id="L59">    return query.uniqueResult(); // Returns null if no result is found</span>
+  }
+
+  public RegisteredModelInfoDAO getRegisteredModelDaoOrThrow(
+      Session session, UUID schemaId, String name) {
+<span class="fc" id="L64">    RegisteredModelInfoDAO existingRegisteredModelDao =</span>
+<span class="fc" id="L65">        getRegisteredModelDao(session, schemaId, name);</span>
+<span class="pc bpc" id="L66" title="1 of 2 branches missed.">    if (existingRegisteredModelDao == null) {</span>
+<span class="nc" id="L67">      throw new BaseException(ErrorCode.NOT_FOUND, &quot;Registered model not found: &quot; + name);</span>
+    }
+<span class="fc" id="L69">    return existingRegisteredModelDao;</span>
+  }
+
+  public List&lt;RegisteredModelInfoDAO&gt; getAllRegisteredModelsDao(
+      Session session, Optional&lt;String&gt; token, Optional&lt;Integer&gt; maxResults) {
+<span class="fc" id="L74">    UUID tokenToUse = new UUID(0, 0);</span>
+<span class="pc bpc" id="L75" title="1 of 2 branches missed.">    if (token.isPresent()) {</span>
+<span class="nc" id="L76">      tokenToUse = UUID.fromString(token.get());</span>
+    }
+<span class="fc" id="L78">    String hql = &quot;FROM RegisteredModelInfoDAO t WHERE t.id &gt; :token ORDER BY t.id ASC&quot;;</span>
+<span class="fc" id="L79">    Query&lt;RegisteredModelInfoDAO&gt; query = session.createQuery(hql, RegisteredModelInfoDAO.class);</span>
+<span class="fc" id="L80">    query.setParameter(&quot;token&quot;, tokenToUse);</span>
+<span class="fc" id="L81">    query.setMaxResults(REGISTERED_MODEL_LISTING_HELPER.getPageSize(maxResults));</span>
+<span class="fc" id="L82">    return query.getResultList(); // Returns null if no result is found</span>
+  }
+
+  public ModelVersionInfoDAO getModelVersionDao(Session session, UUID modelId, Long version) {
+<span class="fc" id="L86">    String hql =</span>
+        &quot;FROM ModelVersionInfoDAO t WHERE t.registeredModelId = :registeredModelId AND t.version = :version&quot;;
+<span class="fc" id="L88">    Query&lt;ModelVersionInfoDAO&gt; query = session.createQuery(hql, ModelVersionInfoDAO.class);</span>
+<span class="fc" id="L89">    query.setParameter(&quot;registeredModelId&quot;, modelId);</span>
+<span class="fc" id="L90">    query.setParameter(&quot;version&quot;, version.toString());</span>
+<span class="fc" id="L91">    query.setMaxResults(1);</span>
+<span class="fc" id="L92">    LOGGER.info(&quot;Finding model version by registeredModelId: {} and version: {}&quot;, modelId, version);</span>
+<span class="fc" id="L93">    return query.uniqueResult(); // Returns null if no result is found</span>
+  }
+
+  public ModelVersionInfoDAO getModelVersionDaoOrThrow(
+      Session session, UUID modelId, String fullName, Long version) {
+<span class="fc" id="L98">    ModelVersionInfoDAO modelVersionInfoDAO = getModelVersionDao(session, modelId, version);</span>
+<span class="pc bpc" id="L99" title="1 of 2 branches missed.">    if (modelVersionInfoDAO == null) {</span>
+<span class="nc" id="L100">      throw new BaseException(</span>
+          ErrorCode.NOT_FOUND, &quot;Model version not found: &quot; + fullName + &quot;/&quot; + version);
+    }
+<span class="fc" id="L103">    return modelVersionInfoDAO;</span>
+  }
+
+  public ModelVersionInfoDAO getModelVersionDaoOrThrow(
+      Session session, UUID schemaId, String fullName, String registeredModelName, Long version) {
+<span class="fc" id="L108">    RegisteredModelInfoDAO rmInfoDao =</span>
+<span class="fc" id="L109">        getRegisteredModelDaoOrThrow(session, schemaId, registeredModelName);</span>
+<span class="fc" id="L110">    ModelVersionInfoDAO modelVersionInfoDAO =</span>
+<span class="fc" id="L111">        getModelVersionDaoOrThrow(session, rmInfoDao.getId(), fullName, version);</span>
+<span class="fc" id="L112">    return modelVersionInfoDAO;</span>
+  }
+
+  public List&lt;ModelVersionInfoDAO&gt; getModelVersionsDao(
+      Session session, UUID registeredModelId, String token, int maxResults) {
+<span class="fc" id="L117">    String hql =</span>
+        &quot;FROM ModelVersionInfoDAO t WHERE t.registeredModelId = :registeredModelId AND t.version &gt; :token ORDER BY t.version ASC&quot;;
+<span class="fc" id="L119">    Query&lt;ModelVersionInfoDAO&gt; query = session.createQuery(hql, ModelVersionInfoDAO.class);</span>
+<span class="fc" id="L120">    query.setParameter(&quot;registeredModelId&quot;, registeredModelId);</span>
+<span class="fc" id="L121">    query.setParameter(&quot;token&quot;, Long.parseLong(token));</span>
+<span class="fc" id="L122">    query.setMaxResults(maxResults);</span>
+<span class="fc" id="L123">    LOGGER.info(&quot;Finding model versions by registeredModelId: {}&quot;, registeredModelId);</span>
+<span class="fc" id="L124">    return query.getResultList(); // Returns null if no result is found</span>
+  }
+
+  /** **************** ModelRepository convenience methods ***************** */
+  private String getRegisteredModelFullName(RegisteredModelInfo registeredModelInfo) {
+<span class="fc" id="L129">    return getRegisteredModelFullName(</span>
+<span class="fc" id="L130">        registeredModelInfo.getCatalogName(),</span>
+<span class="fc" id="L131">        registeredModelInfo.getSchemaName(),</span>
+<span class="fc" id="L132">        registeredModelInfo.getName());</span>
+  }
+
+  private String getRegisteredModelFullName(
+      String catalogName, String schemaName, String modelName) {
+<span class="fc" id="L137">    return catalogName + &quot;.&quot; + schemaName + &quot;.&quot; + modelName;</span>
+  }
+
+  public String getNextPageToken(List&lt;ModelVersionInfoDAO&gt; entities, Optional&lt;Integer&gt; maxResults) {
+<span class="pc bpc" id="L141" title="1 of 2 branches missed.">    if (entities == null</span>
+<span class="pc bpc" id="L142" title="1 of 2 branches missed.">        || entities.isEmpty()</span>
+<span class="pc bpc" id="L143" title="1 of 2 branches missed.">        || entities.size() &lt; PagedListingHelper.getPageSize(maxResults)) {</span>
+<span class="fc" id="L144">      return null;</span>
+    }
+    // return the last version
+<span class="nc" id="L147">    return entities.get(entities.size() - 1).getVersion().toString();</span>
+  }
+
+  /** **************** Registered Model handlers ***************** */
+  public RegisteredModelInfo getRegisteredModel(String fullName) {
+<span class="fc" id="L152">    LOGGER.info(&quot;Getting registered model: {}&quot;, fullName);</span>
+<span class="fc" id="L153">    RegisteredModelInfo registeredModelInfo = null;</span>
+<span class="fc" id="L154">    try (Session session = sessionFactory.openSession()) {</span>
+<span class="fc" id="L155">      session.setDefaultReadOnly(true);</span>
+<span class="fc" id="L156">      Transaction tx = session.beginTransaction();</span>
+      try {
+<span class="fc" id="L158">        String[] parts = RepositoryUtils.parseFullName(fullName);</span>
+<span class="fc" id="L159">        String catalogName = parts[0];</span>
+<span class="fc" id="L160">        String schemaName = parts[1];</span>
+<span class="fc" id="L161">        String registeredModelName = parts[2];</span>
+<span class="fc" id="L162">        RegisteredModelInfoDAO registeredModelInfoDAO =</span>
+<span class="fc" id="L163">            findRegisteredModel(session, catalogName, schemaName, registeredModelName);</span>
+<span class="fc bfc" id="L164" title="All 2 branches covered.">        if (registeredModelInfoDAO == null) {</span>
+<span class="fc" id="L165">          throw new BaseException(ErrorCode.NOT_FOUND, &quot;Registered model not found: &quot; + fullName);</span>
+        }
+<span class="fc" id="L167">        registeredModelInfo = registeredModelInfoDAO.toRegisteredModelInfo();</span>
+<span class="fc" id="L168">        registeredModelInfo.setCatalogName(catalogName);</span>
+<span class="fc" id="L169">        registeredModelInfo.setSchemaName(schemaName);</span>
+<span class="fc" id="L170">        registeredModelInfo.setFullName(getRegisteredModelFullName(registeredModelInfo));</span>
+<span class="fc" id="L171">        tx.commit();</span>
+<span class="fc" id="L172">        return registeredModelInfo;</span>
+<span class="fc" id="L173">      } catch (Exception e) {</span>
+<span class="pc bpc" id="L174" title="2 of 4 branches missed.">        if (tx != null &amp;&amp; tx.getStatus().canRollback()) {</span>
+<span class="fc" id="L175">          tx.rollback();</span>
+        }
+<span class="fc" id="L177">        throw e;</span>
+      }
+    }
+  }
+
+  private RegisteredModelInfoDAO findRegisteredModel(
+      Session session, String catalogName, String schemaName, String registeredModelName) {
+<span class="fc" id="L184">    UUID schemaId =</span>
+<span class="fc" id="L185">        repositories.getSchemaRepository().getSchemaId(session, catalogName, schemaName);</span>
+<span class="fc" id="L186">    return getRegisteredModelDao(session, schemaId, registeredModelName);</span>
+  }
+
+  public RegisteredModelInfo createRegisteredModel(CreateRegisteredModel createRegisteredModel) {
+<span class="fc" id="L190">    ValidationUtils.validateSqlObjectName(createRegisteredModel.getName());</span>
+<span class="fc" id="L191">    long createTime = System.currentTimeMillis();</span>
+<span class="fc" id="L192">    String modelId = UUID.randomUUID().toString();</span>
+<span class="fc" id="L193">    String callerId = IdentityUtils.findPrincipalEmailAddress();</span>
+<span class="fc" id="L194">    RegisteredModelInfo registeredModelInfo =</span>
+        new RegisteredModelInfo()
+<span class="fc" id="L196">            .id(modelId)</span>
+<span class="fc" id="L197">            .name(createRegisteredModel.getName())</span>
+<span class="fc" id="L198">            .catalogName(createRegisteredModel.getCatalogName())</span>
+<span class="fc" id="L199">            .schemaName(createRegisteredModel.getSchemaName())</span>
+<span class="fc" id="L200">            .comment(createRegisteredModel.getComment())</span>
+<span class="fc" id="L201">            .owner(callerId)</span>
+<span class="fc" id="L202">            .createdAt(createTime)</span>
+<span class="fc" id="L203">            .createdBy(callerId)</span>
+<span class="fc" id="L204">            .updatedAt(createTime)</span>
+<span class="fc" id="L205">            .updatedBy(callerId);</span>
+<span class="fc" id="L206">    String fullName = getRegisteredModelFullName(registeredModelInfo);</span>
+<span class="fc" id="L207">    registeredModelInfo.setFullName(fullName);</span>
+<span class="fc" id="L208">    LOGGER.info(&quot;Creating Registered Model: {}&quot;, fullName);</span>
+
+    Transaction tx;
+<span class="fc" id="L211">    try (Session session = sessionFactory.openSession()) {</span>
+<span class="fc" id="L212">      tx = session.beginTransaction();</span>
+<span class="fc" id="L213">      String catalogName = registeredModelInfo.getCatalogName();</span>
+<span class="fc" id="L214">      String schemaName = registeredModelInfo.getSchemaName();</span>
+<span class="fc" id="L215">      UUID schemaId =</span>
+<span class="fc" id="L216">          repositories.getSchemaRepository().getSchemaId(session, catalogName, schemaName);</span>
+<span class="fc" id="L217">      UUID catalogId = repositories.getCatalogRepository().getCatalogId(session, catalogName);</span>
+<span class="fc" id="L218">      String storageLocation =</span>
+<span class="fc" id="L219">          fileOperations.getModelStorageLocation(</span>
+<span class="fc" id="L220">              catalogId.toString(), schemaId.toString(), modelId);</span>
+      try {
+        // Check if registered model already exists
+<span class="fc" id="L223">        RegisteredModelInfoDAO existingRegisteredModel =</span>
+<span class="fc" id="L224">            getRegisteredModelDao(session, schemaId, registeredModelInfo.getName());</span>
+<span class="pc bpc" id="L225" title="1 of 2 branches missed.">        if (existingRegisteredModel != null) {</span>
+<span class="nc" id="L226">          throw new BaseException(</span>
+              ErrorCode.ALREADY_EXISTS, &quot;Registered model already exists: &quot; + fullName);
+        }
+<span class="fc" id="L229">        registeredModelInfo.setStorageLocation(storageLocation);</span>
+<span class="fc" id="L230">        RegisteredModelInfoDAO registeredModelInfoDAO =</span>
+<span class="fc" id="L231">            RegisteredModelInfoDAO.from(registeredModelInfo);</span>
+<span class="fc" id="L232">        registeredModelInfoDAO.setSchemaId(schemaId);</span>
+<span class="fc" id="L233">        registeredModelInfoDAO.setMaxVersionNumber(0L);</span>
+<span class="fc" id="L234">        session.persist(registeredModelInfoDAO);</span>
+<span class="fc" id="L235">        UriUtils.createStorageLocationPath(storageLocation);</span>
+<span class="fc" id="L236">        tx.commit();</span>
+<span class="nc" id="L237">      } catch (RuntimeException e) {</span>
+<span class="nc bnc" id="L238" title="All 4 branches missed.">        if (tx != null &amp;&amp; tx.getStatus().canRollback()) {</span>
+          try {
+            // For now, never delete.  We will implement a soft delete later.
+            // UriUtils.deleteStorageLocationPath(storageLocation);
+          } catch (Exception deleteErr) {
+            LOGGER.error(
+                &quot;Unable to delete storage location {} during rollback: {}&quot;,
+                storageLocation,
+                deleteErr.getMessage());
+          }
+<span class="nc" id="L248">          tx.rollback();</span>
+        }
+<span class="nc" id="L250">        throw e;</span>
+<span class="fc" id="L251">      }</span>
+<span class="fc" id="L252">    } catch (RuntimeException e) {</span>
+<span class="pc bpc" id="L253" title="1 of 2 branches missed.">      if (e instanceof BaseException) {</span>
+<span class="fc" id="L254">        throw e;</span>
+      }
+<span class="nc" id="L256">      throw new BaseException(</span>
+          ErrorCode.INTERNAL, &quot;Error creating registered model: &quot; + fullName, e);
+<span class="fc" id="L258">    }</span>
+<span class="fc" id="L259">    return registeredModelInfo;</span>
+  }
+
+  public ListRegisteredModelsResponse listRegisteredModels(
+      Optional&lt;String&gt; catalogName,
+      Optional&lt;String&gt; schemaName,
+      Optional&lt;Integer&gt; maxResults,
+      Optional&lt;String&gt; pageToken) {
+<span class="fc" id="L267">    catalogName = catalogName.filter(name -&gt; !name.isEmpty());</span>
+<span class="fc" id="L268">    schemaName = schemaName.filter(name -&gt; !name.isEmpty());</span>
+<span class="pc bpc" id="L269" title="1 of 4 branches missed.">    if (catalogName.isPresent() &amp;&amp; schemaName.isEmpty()) {</span>
+<span class="nc" id="L270">      throw new BaseException(</span>
+          ErrorCode.INVALID_ARGUMENT,
+          &quot;Cannot specify catalog w/o schema for list registered models.&quot;);
+    }
+<span class="pc bpc" id="L274" title="1 of 4 branches missed.">    if (catalogName.isEmpty() &amp;&amp; schemaName.isPresent()) {</span>
+<span class="nc" id="L275">      throw new BaseException(</span>
+          ErrorCode.INVALID_ARGUMENT,
+          &quot;Cannot specify schema w/o catalog for list registered models.&quot;);
+    }
+<span class="fc" id="L279">    try (Session session = sessionFactory.openSession()) {</span>
+<span class="fc" id="L280">      session.setDefaultReadOnly(true);</span>
+<span class="fc" id="L281">      Transaction tx = session.beginTransaction();</span>
+      try {
+<span class="fc" id="L283">        ListRegisteredModelsResponse response = new ListRegisteredModelsResponse();</span>
+<span class="pc bpc" id="L284" title="1 of 4 branches missed.">        if (catalogName.isEmpty() || schemaName.isEmpty()) {</span>
+          // Run the custom query to pull all models back from all catalogs/schemas
+<span class="fc" id="L286">          LOGGER.info(&quot;Listing all registered models in the metastore.&quot;);</span>
+<span class="fc" id="L287">          List&lt;RegisteredModelInfoDAO&gt; registeredModelInfoDAOList =</span>
+<span class="fc" id="L288">              getAllRegisteredModelsDao(session, pageToken, maxResults);</span>
+<span class="fc" id="L289">          String nextPageToken =</span>
+<span class="fc" id="L290">              REGISTERED_MODEL_LISTING_HELPER.getNextPageToken(</span>
+                  registeredModelInfoDAOList, maxResults);
+<span class="fc" id="L292">          List&lt;RegisteredModelInfo&gt; result = new ArrayList&lt;&gt;();</span>
+<span class="fc bfc" id="L293" title="All 2 branches covered.">          for (RegisteredModelInfoDAO registeredModelInfoDAO : registeredModelInfoDAOList) {</span>
+<span class="fc" id="L294">            SchemaInfoDAO schemaInfoDAO =</span>
+<span class="fc" id="L295">                RepositoryUtils.getSchemaByIdOrThrow(session, registeredModelInfoDAO.getSchemaId());</span>
+<span class="fc" id="L296">            CatalogInfoDAO catalogInfoDAO =</span>
+<span class="fc" id="L297">                RepositoryUtils.getCatalogByIdOrThrow(session, schemaInfoDAO.getCatalogId());</span>
+
+<span class="fc" id="L299">            RegisteredModelInfo registeredModelInfo =</span>
+<span class="fc" id="L300">                registeredModelInfoDAO.toRegisteredModelInfo();</span>
+<span class="fc" id="L301">            registeredModelInfo.setCatalogName(catalogInfoDAO.getName());</span>
+<span class="fc" id="L302">            registeredModelInfo.setSchemaName(schemaInfoDAO.getName());</span>
+<span class="fc" id="L303">            registeredModelInfo.setFullName(getRegisteredModelFullName(registeredModelInfo));</span>
+<span class="fc" id="L304">            result.add(registeredModelInfo);</span>
+<span class="fc" id="L305">          }</span>
+<span class="fc" id="L306">          return new ListRegisteredModelsResponse()</span>
+<span class="fc" id="L307">              .registeredModels(result)</span>
+<span class="fc" id="L308">              .nextPageToken(nextPageToken);</span>
+        } else {
+<span class="fc" id="L310">          LOGGER.info(&quot;Listing registered models in {}.{}&quot;, catalogName.get(), schemaName.get());</span>
+<span class="fc" id="L311">          UUID schemaId =</span>
+              repositories
+<span class="fc" id="L313">                  .getSchemaRepository()</span>
+<span class="fc" id="L314">                  .getSchemaId(session, catalogName.get(), schemaName.get());</span>
+<span class="fc" id="L315">          response =</span>
+<span class="fc" id="L316">              listRegisteredModels(</span>
+<span class="fc" id="L317">                  session, schemaId, catalogName.get(), schemaName.get(), maxResults, pageToken);</span>
+        }
+<span class="fc" id="L319">        tx.commit();</span>
+<span class="fc" id="L320">        return response;</span>
+<span class="nc" id="L321">      } catch (Exception e) {</span>
+<span class="nc bnc" id="L322" title="All 4 branches missed.">        if (tx != null &amp;&amp; tx.getStatus().canRollback()) {</span>
+<span class="nc" id="L323">          tx.rollback();</span>
+        }
+<span class="nc" id="L325">        throw e;</span>
+      }
+<span class="pc bpc" id="L327" title="1 of 2 branches missed.">    }</span>
+  }
+
+  public ListRegisteredModelsResponse listRegisteredModels(
+      Session session,
+      UUID schemaId,
+      String catalogName,
+      String schemaName,
+      Optional&lt;Integer&gt; maxResults,
+      Optional&lt;String&gt; pageToken) {
+<span class="fc" id="L337">    List&lt;RegisteredModelInfoDAO&gt; registeredModelInfoDAOList =</span>
+<span class="fc" id="L338">        REGISTERED_MODEL_LISTING_HELPER.listEntity(session, maxResults, pageToken, schemaId);</span>
+<span class="fc" id="L339">    String nextPageToken =</span>
+<span class="fc" id="L340">        REGISTERED_MODEL_LISTING_HELPER.getNextPageToken(registeredModelInfoDAOList, maxResults);</span>
+<span class="fc" id="L341">    List&lt;RegisteredModelInfo&gt; result = new ArrayList&lt;&gt;();</span>
+<span class="fc bfc" id="L342" title="All 2 branches covered.">    for (RegisteredModelInfoDAO registeredModelInfoDAO : registeredModelInfoDAOList) {</span>
+<span class="fc" id="L343">      RegisteredModelInfo registeredModelInfo = registeredModelInfoDAO.toRegisteredModelInfo();</span>
+<span class="fc" id="L344">      registeredModelInfo.setCatalogName(catalogName);</span>
+<span class="fc" id="L345">      registeredModelInfo.setSchemaName(schemaName);</span>
+<span class="fc" id="L346">      registeredModelInfo.setFullName(getRegisteredModelFullName(registeredModelInfo));</span>
+<span class="fc" id="L347">      result.add(registeredModelInfo);</span>
+<span class="fc" id="L348">    }</span>
+<span class="fc" id="L349">    return new ListRegisteredModelsResponse().registeredModels(result).nextPageToken(nextPageToken);</span>
+  }
+
+  public RegisteredModelInfo updateRegisteredModel(
+      String fullName, UpdateRegisteredModel updateRegisteredModel) {
+<span class="fc bfc" id="L354" title="All 2 branches covered.">    if (updateRegisteredModel.getNewName() != null) {</span>
+<span class="fc" id="L355">      ValidationUtils.validateSqlObjectName(updateRegisteredModel.getNewName());</span>
+    }
+<span class="pc bpc" id="L357" title="1 of 2 branches missed.">    if (fullName == null) {</span>
+<span class="nc" id="L358">      throw new BaseException(ErrorCode.INVALID_ARGUMENT, &quot;No three tier full name specified.&quot;);</span>
+    }
+<span class="fc bfc" id="L360" title="All 4 branches covered.">    if (updateRegisteredModel.getNewName() == null &amp;&amp; updateRegisteredModel.getComment() == null) {</span>
+<span class="fc" id="L361">      throw new BaseException(ErrorCode.INVALID_ARGUMENT, &quot;No updated fields defined.&quot;);</span>
+    }
+
+<span class="fc" id="L364">    LOGGER.info(&quot;Updating Registered Model: {}&quot;, fullName);</span>
+    RegisteredModelInfo registeredModelInfo;
+<span class="fc" id="L366">    String callerId = IdentityUtils.findPrincipalEmailAddress();</span>
+
+    Transaction tx;
+<span class="fc" id="L369">    try (Session session = sessionFactory.openSession()) {</span>
+<span class="fc" id="L370">      String[] parts = RepositoryUtils.parseFullName(fullName);</span>
+<span class="fc" id="L371">      String catalogName = parts[0];</span>
+<span class="fc" id="L372">      String schemaName = parts[1];</span>
+<span class="fc" id="L373">      String registeredModelName = parts[2];</span>
+<span class="fc" id="L374">      tx = session.beginTransaction();</span>
+      try {
+        // Verify that the new model name does not already exist in the database
+<span class="fc bfc" id="L377" title="All 2 branches covered.">        if (updateRegisteredModel.getNewName() != null) {</span>
+<span class="fc" id="L378">          String newFullName =</span>
+<span class="fc" id="L379">              getRegisteredModelFullName(</span>
+<span class="fc" id="L380">                  catalogName, schemaName, updateRegisteredModel.getNewName());</span>
+<span class="fc" id="L381">          RegisteredModelInfoDAO newRegisteredModelInfoDAO =</span>
+<span class="fc" id="L382">              findRegisteredModel(</span>
+<span class="fc" id="L383">                  session, catalogName, schemaName, updateRegisteredModel.getNewName());</span>
+<span class="pc bpc" id="L384" title="1 of 2 branches missed.">          if (newRegisteredModelInfoDAO != null) {</span>
+<span class="nc" id="L385">            throw new BaseException(</span>
+                ErrorCode.ALREADY_EXISTS, &quot;Registered model already exists: &quot; + newFullName);
+          }
+        }
+        // Get the record from the database
+<span class="fc" id="L390">        RegisteredModelInfoDAO origRegisteredModelInfoDAO =</span>
+<span class="fc" id="L391">            findRegisteredModel(session, catalogName, schemaName, registeredModelName);</span>
+<span class="pc bpc" id="L392" title="1 of 2 branches missed.">        if (origRegisteredModelInfoDAO == null) {</span>
+<span class="nc" id="L393">          throw new BaseException(ErrorCode.NOT_FOUND, &quot;Registered model not found: &quot; + fullName);</span>
+        }
+<span class="fc bfc" id="L395" title="All 2 branches covered.">        if (updateRegisteredModel.getNewName() != null) {</span>
+<span class="fc" id="L396">          origRegisteredModelInfoDAO.setName(updateRegisteredModel.getNewName());</span>
+        }
+<span class="fc bfc" id="L398" title="All 2 branches covered.">        if (updateRegisteredModel.getComment() != null) {</span>
+<span class="fc" id="L399">          origRegisteredModelInfoDAO.setComment(updateRegisteredModel.getComment());</span>
+        }
+<span class="fc" id="L401">        long updatedTime = System.currentTimeMillis();</span>
+<span class="fc" id="L402">        origRegisteredModelInfoDAO.setUpdatedAt(new Date(updatedTime));</span>
+<span class="fc" id="L403">        origRegisteredModelInfoDAO.setUpdatedBy(callerId);</span>
+<span class="fc" id="L404">        session.persist(origRegisteredModelInfoDAO);</span>
+<span class="fc" id="L405">        registeredModelInfo = origRegisteredModelInfoDAO.toRegisteredModelInfo();</span>
+<span class="fc" id="L406">        registeredModelInfo.setCatalogName(catalogName);</span>
+<span class="fc" id="L407">        registeredModelInfo.setSchemaName(schemaName);</span>
+<span class="fc" id="L408">        registeredModelInfo.setFullName(getRegisteredModelFullName(registeredModelInfo));</span>
+<span class="fc" id="L409">        tx.commit();</span>
+<span class="nc" id="L410">      } catch (RuntimeException e) {</span>
+<span class="nc bnc" id="L411" title="All 4 branches missed.">        if (tx != null &amp;&amp; tx.getStatus().canRollback()) {</span>
+<span class="nc" id="L412">          tx.rollback();</span>
+        }
+<span class="nc" id="L414">        throw e;</span>
+<span class="fc" id="L415">      }</span>
+<span class="nc" id="L416">    } catch (RuntimeException e) {</span>
+<span class="nc bnc" id="L417" title="All 2 branches missed.">      if (e instanceof BaseException) {</span>
+<span class="nc" id="L418">        throw e;</span>
+      }
+<span class="nc" id="L420">      throw new BaseException(</span>
+          ErrorCode.INTERNAL, &quot;Error updating registered model: &quot; + fullName, e);
+<span class="fc" id="L422">    }</span>
+<span class="fc" id="L423">    return registeredModelInfo;</span>
+  }
+
+  public void deleteRegisteredModel(String fullName, boolean force) {
+<span class="fc" id="L427">    LOGGER.info(&quot;Deleting Registered Model: {}&quot;, fullName);</span>
+<span class="fc" id="L428">    try (Session session = sessionFactory.openSession()) {</span>
+<span class="fc" id="L429">      Transaction tx = session.beginTransaction();</span>
+<span class="fc" id="L430">      String[] parts = fullName.split(&quot;\\.&quot;);</span>
+<span class="pc bpc" id="L431" title="1 of 2 branches missed.">      if (parts.length != 3) {</span>
+<span class="nc" id="L432">        throw new BaseException(</span>
+            ErrorCode.INVALID_ARGUMENT, &quot;Invalid registered model name: &quot; + fullName);
+      }
+<span class="fc" id="L435">      String catalogName = parts[0];</span>
+<span class="fc" id="L436">      String schemaName = parts[1];</span>
+<span class="fc" id="L437">      String registeredModelName = parts[2];</span>
+      try {
+<span class="fc" id="L439">        UUID schemaId =</span>
+<span class="fc" id="L440">            repositories.getSchemaRepository().getSchemaId(session, catalogName, schemaName);</span>
+<span class="fc" id="L441">        deleteRegisteredModel(session, schemaId, registeredModelName, force);</span>
+<span class="fc" id="L442">        tx.commit();</span>
+<span class="fc" id="L443">      } catch (RuntimeException e) {</span>
+<span class="pc bpc" id="L444" title="2 of 4 branches missed.">        if (tx != null &amp;&amp; tx.getStatus().canRollback()) {</span>
+<span class="fc" id="L445">          tx.rollback();</span>
+        }
+<span class="fc" id="L447">        throw e;</span>
+<span class="fc" id="L448">      }</span>
+    }
+<span class="fc" id="L450">  }</span>
+
+  public void deleteRegisteredModel(
+      Session session, UUID schemaId, String registeredModelName, boolean force) {
+<span class="fc" id="L454">    RegisteredModelInfoDAO registeredModelInfoDAO =</span>
+<span class="fc" id="L455">        getRegisteredModelDaoOrThrow(session, schemaId, registeredModelName);</span>
+<span class="fc bfc" id="L456" title="All 2 branches covered.">    if (force) {</span>
+      // Remove all model versions
+<span class="fc" id="L458">      List&lt;ModelVersionInfoDAO&gt; versionList =</span>
+<span class="fc" id="L459">          getModelVersionsDao(session, registeredModelInfoDAO.getId(), &quot;0&quot;, 1);</span>
+<span class="fc bfc" id="L460" title="All 2 branches covered.">      while (versionList.size() &gt; 0) {</span>
+<span class="fc bfc" id="L461" title="All 2 branches covered.">        for (ModelVersionInfoDAO modelVersionInfoDao : versionList) {</span>
+<span class="fc" id="L462">          session.remove(modelVersionInfoDao);</span>
+<span class="fc" id="L463">        }</span>
+<span class="fc" id="L464">        versionList = getModelVersionsDao(session, registeredModelInfoDAO.getId(), &quot;0&quot;, 1);</span>
+      }
+<span class="fc" id="L466">    } else {</span>
+      // Check if model versions exist and throw with unable to delete if they exist
+<span class="fc" id="L468">      List&lt;ModelVersionInfoDAO&gt; versionList =</span>
+<span class="fc" id="L469">          getModelVersionsDao(session, registeredModelInfoDAO.getId(), &quot;0&quot;, 1);</span>
+<span class="fc bfc" id="L470" title="All 2 branches covered.">      if (versionList.size() &gt; 0) {</span>
+<span class="fc" id="L471">        throw new BaseException(</span>
+            ErrorCode.ABORTED,
+            &quot;Unable to delete a registered model with existing model versions: &quot;
+                + registeredModelName);
+      }
+    }
+<span class="fc" id="L477">    session.remove(registeredModelInfoDAO);</span>
+<span class="fc" id="L478">  }</span>
+
+  /** **************** Model version handlers ***************** */
+  public ModelVersionInfo getModelVersion(String fullName, long version) {
+<span class="fc" id="L482">    LOGGER.info(&quot;Getting model version: {}/{}&quot;, fullName, version);</span>
+<span class="fc" id="L483">    ModelVersionInfo modelVersionInfo = null;</span>
+<span class="fc" id="L484">    try (Session session = sessionFactory.openSession()) {</span>
+<span class="fc" id="L485">      session.setDefaultReadOnly(true);</span>
+<span class="fc" id="L486">      Transaction tx = session.beginTransaction();</span>
+      try {
+<span class="fc" id="L488">        String[] parts = RepositoryUtils.parseFullName(fullName);</span>
+<span class="fc" id="L489">        String catalogName = parts[0];</span>
+<span class="fc" id="L490">        String schemaName = parts[1];</span>
+<span class="fc" id="L491">        String registeredModelName = parts[2];</span>
+<span class="fc" id="L492">        RegisteredModelInfoDAO registeredModelInfoDAO =</span>
+<span class="fc" id="L493">            findRegisteredModel(session, catalogName, schemaName, registeredModelName);</span>
+<span class="fc bfc" id="L494" title="All 2 branches covered.">        if (registeredModelInfoDAO == null) {</span>
+<span class="fc" id="L495">          throw new BaseException(ErrorCode.NOT_FOUND, &quot;Registered model not found: &quot; + fullName);</span>
+        }
+<span class="fc" id="L497">        ModelVersionInfoDAO modelVersionDao =</span>
+<span class="fc" id="L498">            getModelVersionDao(session, registeredModelInfoDAO.getId(), version);</span>
+<span class="fc bfc" id="L499" title="All 2 branches covered.">        if (modelVersionDao == null) {</span>
+<span class="fc" id="L500">          throw new BaseException(</span>
+              ErrorCode.NOT_FOUND, &quot;Model version not found: &quot; + fullName + &quot;/&quot; + version);
+        }
+<span class="fc" id="L503">        modelVersionInfo = modelVersionDao.toModelVersionInfo();</span>
+<span class="fc" id="L504">        modelVersionInfo.setModelName(registeredModelName);</span>
+<span class="fc" id="L505">        modelVersionInfo.setCatalogName(catalogName);</span>
+<span class="fc" id="L506">        modelVersionInfo.setSchemaName(schemaName);</span>
+<span class="fc" id="L507">        tx.commit();</span>
+<span class="fc" id="L508">        return modelVersionInfo;</span>
+<span class="fc" id="L509">      } catch (Exception e) {</span>
+<span class="pc bpc" id="L510" title="2 of 4 branches missed.">        if (tx != null &amp;&amp; tx.getStatus().canRollback()) {</span>
+<span class="fc" id="L511">          tx.rollback();</span>
+        }
+<span class="fc" id="L513">        throw e;</span>
+      }
+    }
+  }
+
+  public ModelVersionInfo createModelVersion(CreateModelVersion createModelVersion) {
+<span class="fc" id="L519">    long createTime = System.currentTimeMillis();</span>
+<span class="fc" id="L520">    String callerId = IdentityUtils.findPrincipalEmailAddress();</span>
+<span class="fc" id="L521">    String modelVersionId = UUID.randomUUID().toString();</span>
+<span class="fc" id="L522">    String catalogName = createModelVersion.getCatalogName();</span>
+<span class="fc" id="L523">    String schemaName = createModelVersion.getSchemaName();</span>
+<span class="fc" id="L524">    String modelName = createModelVersion.getModelName();</span>
+<span class="fc" id="L525">    ModelVersionInfo modelVersionInfo =</span>
+        new ModelVersionInfo()
+<span class="fc" id="L527">            .id(modelVersionId)</span>
+<span class="fc" id="L528">            .modelName(createModelVersion.getModelName())</span>
+<span class="fc" id="L529">            .catalogName(createModelVersion.getCatalogName())</span>
+<span class="fc" id="L530">            .schemaName(createModelVersion.getSchemaName())</span>
+<span class="fc" id="L531">            .runId(createModelVersion.getRunId())</span>
+<span class="fc" id="L532">            .source(createModelVersion.getSource())</span>
+<span class="fc" id="L533">            .status(ModelVersionStatus.PENDING_REGISTRATION)</span>
+<span class="fc" id="L534">            .comment(createModelVersion.getComment())</span>
+<span class="fc" id="L535">            .createdAt(createTime)</span>
+<span class="fc" id="L536">            .createdBy(callerId)</span>
+<span class="fc" id="L537">            .updatedAt(createTime)</span>
+<span class="fc" id="L538">            .updatedBy(callerId);</span>
+<span class="fc" id="L539">    String registeredModelFullName = getRegisteredModelFullName(catalogName, schemaName, modelName);</span>
+<span class="fc" id="L540">    LOGGER.info(&quot;Creating Registered Model: {}&quot;, registeredModelFullName);</span>
+
+    Transaction tx;
+<span class="fc" id="L543">    try (Session session = sessionFactory.openSession()) {</span>
+<span class="fc" id="L544">      tx = session.beginTransaction();</span>
+<span class="fc" id="L545">      UUID catalogId = repositories.getCatalogRepository().getCatalogId(session, catalogName);</span>
+<span class="fc" id="L546">      UUID schemaId =</span>
+<span class="fc" id="L547">          repositories.getSchemaRepository().getSchemaId(session, catalogName, schemaName);</span>
+<span class="fc" id="L548">      String storageLocation = &quot;&quot;;</span>
+      try {
+        // Check if registered model already exists
+<span class="fc" id="L551">        RegisteredModelInfoDAO existingRegisteredModel =</span>
+<span class="fc" id="L552">            getRegisteredModelDaoOrThrow(session, schemaId, modelName);</span>
+<span class="pc bpc" id="L553" title="1 of 2 branches missed.">        if (existingRegisteredModel.getMaxVersionNumber() == null</span>
+<span class="pc bpc" id="L554" title="1 of 2 branches missed.">            || existingRegisteredModel.getMaxVersionNumber() &lt; 0) {</span>
+<span class="nc" id="L555">          throw new BaseException(</span>
+              ErrorCode.OUT_OF_RANGE,
+              &quot;Registered model has invalid max model version: &quot;
+<span class="nc" id="L558">                  + existingRegisteredModel.getMaxVersionNumber());</span>
+        }
+<span class="fc" id="L560">        UUID modelId = existingRegisteredModel.getId();</span>
+<span class="fc" id="L561">        Long version = existingRegisteredModel.getMaxVersionNumber() + 1;</span>
+<span class="fc" id="L562">        storageLocation =</span>
+<span class="fc" id="L563">            fileOperations.getModelVersionStorageLocation(</span>
+<span class="fc" id="L564">                catalogId.toString(), schemaId.toString(), modelId.toString(), modelVersionId);</span>
+<span class="fc" id="L565">        modelVersionInfo.setVersion(version);</span>
+<span class="fc" id="L566">        modelVersionInfo.setStorageLocation(storageLocation);</span>
+<span class="fc" id="L567">        ModelVersionInfoDAO modelVersionInfoDAO = ModelVersionInfoDAO.from(modelVersionInfo);</span>
+<span class="fc" id="L568">        modelVersionInfoDAO.setRegisteredModelId(modelId);</span>
+<span class="fc" id="L569">        session.persist(modelVersionInfoDAO);</span>
+<span class="fc" id="L570">        UriUtils.createStorageLocationPath(storageLocation);</span>
+        // update the registered model
+<span class="fc" id="L572">        existingRegisteredModel.setMaxVersionNumber(version);</span>
+<span class="fc" id="L573">        session.persist(existingRegisteredModel);</span>
+<span class="fc" id="L574">        tx.commit();</span>
+<span class="nc" id="L575">      } catch (RuntimeException e) {</span>
+<span class="nc bnc" id="L576" title="All 4 branches missed.">        if (tx != null &amp;&amp; tx.getStatus().canRollback()) {</span>
+          try {
+            // For now, never delete.  We will implement a soft delete later.
+            // UriUtils.deleteStorageLocationPath(storageLocation);
+          } catch (Exception deleteErr) {
+            LOGGER.error(
+                &quot;Unable to delete storage location {} during rollback: {}&quot;,
+                storageLocation,
+                deleteErr.getMessage());
+          }
+<span class="nc" id="L586">          tx.rollback();</span>
+        }
+<span class="nc" id="L588">        throw e;</span>
+<span class="fc" id="L589">      }</span>
+<span class="nc" id="L590">    } catch (RuntimeException e) {</span>
+<span class="nc bnc" id="L591" title="All 2 branches missed.">      if (e instanceof BaseException) {</span>
+<span class="nc" id="L592">        throw e;</span>
+      }
+<span class="nc" id="L594">      throw new BaseException(</span>
+          ErrorCode.INTERNAL,
+          &quot;Error creating model version for model: &quot; + registeredModelFullName,
+          e);
+<span class="fc" id="L598">    }</span>
+<span class="fc" id="L599">    return modelVersionInfo;</span>
+  }
+
+  public ListModelVersionsResponse listModelVersions(
+      String registeredModelFullName, Optional&lt;Integer&gt; maxResults, Optional&lt;String&gt; pageToken) {
+<span class="fc" id="L604">    LOGGER.info(&quot;Listing model versions in {}&quot;, registeredModelFullName);</span>
+<span class="pc bpc" id="L605" title="2 of 4 branches missed.">    if (maxResults.isPresent() &amp;&amp; maxResults.get() &lt; 0) {</span>
+<span class="nc" id="L606">      throw new BaseException(</span>
+          ErrorCode.INVALID_ARGUMENT, &quot;maxResults must be greater than or equal to 0&quot;);
+    }
+<span class="fc bfc" id="L609" title="All 2 branches covered.">    if (pageToken.isPresent()) {</span>
+      try {
+<span class="fc" id="L611">        Long.parseLong(pageToken.get());</span>
+<span class="nc" id="L612">      } catch (NumberFormatException e) {</span>
+<span class="nc" id="L613">        throw new BaseException(</span>
+<span class="nc" id="L614">            ErrorCode.INVALID_ARGUMENT, &quot;Invalid page token received: &quot; + pageToken.get());</span>
+<span class="fc" id="L615">      }</span>
+    }
+<span class="fc" id="L617">    try (Session session = sessionFactory.openSession()) {</span>
+<span class="fc" id="L618">      session.setDefaultReadOnly(true);</span>
+<span class="fc" id="L619">      Transaction tx = session.beginTransaction();</span>
+      try {
+        // Check if registered model already exists
+<span class="fc" id="L622">        String[] parts = registeredModelFullName.split(&quot;\\.&quot;);</span>
+<span class="pc bpc" id="L623" title="1 of 2 branches missed.">        if (parts.length != 3) {</span>
+<span class="nc" id="L624">          throw new BaseException(</span>
+              ErrorCode.INVALID_ARGUMENT,
+              &quot;Invalid registered model name: &quot; + registeredModelFullName);
+        }
+<span class="fc" id="L628">        String catalogName = parts[0];</span>
+<span class="fc" id="L629">        String schemaName = parts[1];</span>
+<span class="fc" id="L630">        String registeredModelName = parts[2];</span>
+<span class="fc" id="L631">        UUID schemaId =</span>
+<span class="fc" id="L632">            repositories.getSchemaRepository().getSchemaId(session, catalogName, schemaName);</span>
+<span class="fc" id="L633">        RegisteredModelInfoDAO existingRegisteredModel =</span>
+<span class="fc" id="L634">            getRegisteredModelDaoOrThrow(session, schemaId, registeredModelName);</span>
+<span class="fc" id="L635">        UUID registeredModelId = existingRegisteredModel.getId();</span>
+<span class="fc" id="L636">        List&lt;ModelVersionInfoDAO&gt; modelVersions =</span>
+<span class="fc" id="L637">            getModelVersionsDao(</span>
+                session,
+                registeredModelId,
+<span class="fc" id="L640">                pageToken.orElse(&quot;0&quot;),</span>
+<span class="fc" id="L641">                PagedListingHelper.getPageSize(maxResults));</span>
+<span class="fc" id="L642">        String nextPageToken = getNextPageToken(modelVersions, maxResults);</span>
+<span class="fc" id="L643">        List&lt;ModelVersionInfo&gt; modelVersionInfoList = new ArrayList&lt;ModelVersionInfo&gt;();</span>
+<span class="pc bpc" id="L644" title="1 of 2 branches missed.">        if (modelVersions != null) {</span>
+<span class="fc bfc" id="L645" title="All 2 branches covered.">          for (ModelVersionInfoDAO curDao : modelVersions) {</span>
+<span class="fc" id="L646">            ModelVersionInfo curInfo = curDao.toModelVersionInfo();</span>
+<span class="fc" id="L647">            curInfo.setCatalogName(catalogName);</span>
+<span class="fc" id="L648">            curInfo.setSchemaName(schemaName);</span>
+<span class="fc" id="L649">            curInfo.setModelName(registeredModelName);</span>
+<span class="fc" id="L650">            modelVersionInfoList.add(curInfo);</span>
+<span class="fc" id="L651">          }</span>
+        }
+<span class="fc" id="L653">        ListModelVersionsResponse response =</span>
+            new ListModelVersionsResponse()
+<span class="fc" id="L655">                .modelVersions(modelVersionInfoList)</span>
+<span class="fc" id="L656">                .nextPageToken(nextPageToken);</span>
+<span class="fc" id="L657">        tx.commit();</span>
+<span class="fc" id="L658">        return response;</span>
+<span class="nc" id="L659">      } catch (Exception e) {</span>
+<span class="nc bnc" id="L660" title="All 4 branches missed.">        if (tx != null &amp;&amp; tx.getStatus().canRollback()) {</span>
+<span class="nc" id="L661">          tx.rollback();</span>
+        }
+<span class="nc" id="L663">        throw e;</span>
+      }
+    }
+  }
+
+  public ModelVersionInfo updateModelVersion(
+      String fullName, Long version, UpdateModelVersion updateModelVersion) {
+<span class="pc bpc" id="L670" title="1 of 2 branches missed.">    if (fullName == null) {</span>
+<span class="nc" id="L671">      throw new BaseException(ErrorCode.INVALID_ARGUMENT, &quot;No model specified.&quot;);</span>
+    }
+<span class="pc bpc" id="L673" title="2 of 4 branches missed.">    if (version == null || version &lt; 1) {</span>
+<span class="nc" id="L674">      throw new BaseException(</span>
+          ErrorCode.INVALID_ARGUMENT, &quot;No valid model version specified: &quot; + version);
+    }
+<span class="pc bpc" id="L677" title="1 of 2 branches missed.">    if (updateModelVersion.getComment() == null) {</span>
+<span class="nc" id="L678">      throw new BaseException(ErrorCode.INVALID_ARGUMENT, &quot;No updated fields defined.&quot;);</span>
+    }
+
+<span class="fc" id="L681">    LOGGER.info(&quot;Updating Model Version: {}/{}&quot;, fullName, version);</span>
+    ModelVersionInfo modelVersionInfo;
+<span class="fc" id="L683">    String callerId = IdentityUtils.findPrincipalEmailAddress();</span>
+
+    Transaction tx;
+<span class="fc" id="L686">    try (Session session = sessionFactory.openSession()) {</span>
+<span class="fc" id="L687">      String[] parts = RepositoryUtils.parseFullName(fullName);</span>
+<span class="fc" id="L688">      String catalogName = parts[0];</span>
+<span class="fc" id="L689">      String schemaName = parts[1];</span>
+<span class="fc" id="L690">      String registeredModelName = parts[2];</span>
+<span class="fc" id="L691">      tx = session.beginTransaction();</span>
+      try {
+        // Get the registered model record from the database
+<span class="fc" id="L694">        UUID schemaId =</span>
+<span class="fc" id="L695">            repositories.getSchemaRepository().getSchemaId(session, catalogName, schemaName);</span>
+        // Get the model version record from the database
+<span class="fc" id="L697">        ModelVersionInfoDAO origModelVersionInfoDAO =</span>
+<span class="fc" id="L698">            getModelVersionDaoOrThrow(session, schemaId, fullName, registeredModelName, version);</span>
+<span class="fc" id="L699">        origModelVersionInfoDAO.setComment(updateModelVersion.getComment());</span>
+<span class="fc" id="L700">        long updatedTime = System.currentTimeMillis();</span>
+<span class="fc" id="L701">        origModelVersionInfoDAO.setUpdatedAt(new Date(updatedTime));</span>
+<span class="fc" id="L702">        origModelVersionInfoDAO.setUpdatedBy(callerId);</span>
+<span class="fc" id="L703">        session.persist(origModelVersionInfoDAO);</span>
+<span class="fc" id="L704">        modelVersionInfo = origModelVersionInfoDAO.toModelVersionInfo();</span>
+<span class="fc" id="L705">        modelVersionInfo.setCatalogName(catalogName);</span>
+<span class="fc" id="L706">        modelVersionInfo.setSchemaName(schemaName);</span>
+<span class="fc" id="L707">        modelVersionInfo.setModelName(registeredModelName);</span>
+<span class="fc" id="L708">        tx.commit();</span>
+<span class="nc" id="L709">      } catch (RuntimeException e) {</span>
+<span class="nc bnc" id="L710" title="All 4 branches missed.">        if (tx != null &amp;&amp; tx.getStatus().canRollback()) {</span>
+<span class="nc" id="L711">          tx.rollback();</span>
+        }
+<span class="nc" id="L713">        throw e;</span>
+<span class="fc" id="L714">      }</span>
+<span class="nc" id="L715">    } catch (RuntimeException e) {</span>
+<span class="nc bnc" id="L716" title="All 2 branches missed.">      if (e instanceof BaseException) {</span>
+<span class="nc" id="L717">        throw e;</span>
+      }
+<span class="nc" id="L719">      throw new BaseException(</span>
+          ErrorCode.INTERNAL, &quot;Error updating model version: &quot; + fullName + &quot;/&quot; + version, e);
+<span class="fc" id="L721">    }</span>
+<span class="fc" id="L722">    return modelVersionInfo;</span>
+  }
+
+  public void deleteModelVersion(String fullName, Long version) {
+<span class="fc" id="L726">    LOGGER.info(&quot;Deleting model version: {}/{}&quot;, fullName, version);</span>
+<span class="fc" id="L727">    String[] parts = fullName.split(&quot;\\.&quot;);</span>
+<span class="pc bpc" id="L728" title="1 of 2 branches missed.">    if (parts.length != 3) {</span>
+<span class="nc" id="L729">      throw new BaseException(</span>
+          ErrorCode.INVALID_ARGUMENT, &quot;Invalid registered model name: &quot; + fullName);
+    }
+<span class="fc" id="L732">    String catalogName = parts[0];</span>
+<span class="fc" id="L733">    String schemaName = parts[1];</span>
+<span class="fc" id="L734">    String registeredModelName = parts[2];</span>
+<span class="fc" id="L735">    try (Session session = sessionFactory.openSession()) {</span>
+<span class="fc" id="L736">      Transaction tx = session.beginTransaction();</span>
+      try {
+<span class="fc" id="L738">        UUID schemaId =</span>
+<span class="fc" id="L739">            repositories.getSchemaRepository().getSchemaId(session, catalogName, schemaName);</span>
+<span class="fc" id="L740">        RegisteredModelInfoDAO existingRegisteredModel =</span>
+<span class="fc" id="L741">            getRegisteredModelDaoOrThrow(session, schemaId, registeredModelName);</span>
+<span class="fc" id="L742">        deleteModelVersion(session, existingRegisteredModel.getId(), fullName, version);</span>
+<span class="fc" id="L743">        tx.commit();</span>
+<span class="nc" id="L744">      } catch (RuntimeException e) {</span>
+<span class="nc bnc" id="L745" title="All 4 branches missed.">        if (tx != null &amp;&amp; tx.getStatus().canRollback()) {</span>
+<span class="nc" id="L746">          tx.rollback();</span>
+        }
+<span class="nc" id="L748">        throw e;</span>
+<span class="fc" id="L749">      }</span>
+    }
+<span class="fc" id="L751">  }</span>
+
+  public void deleteModelVersion(
+      Session session, UUID registeredModelId, String fullName, long version) {
+<span class="fc" id="L755">    ModelVersionInfoDAO modelVersionInfoDAO =</span>
+<span class="fc" id="L756">        getModelVersionDao(session, registeredModelId, version);</span>
+<span class="pc bpc" id="L757" title="1 of 2 branches missed.">    if (modelVersionInfoDAO == null) {</span>
+<span class="nc" id="L758">      throw new BaseException(</span>
+          ErrorCode.NOT_FOUND, &quot;Model version not found: &quot; + fullName + &quot;/&quot; + version);
+    }
+<span class="fc" id="L761">    session.remove(modelVersionInfoDAO);</span>
+<span class="fc" id="L762">  }</span>
+
+  public ModelVersionInfo finalizeModelVersion(FinalizeModelVersion finalizeModelVersion) {
+<span class="pc bpc" id="L765" title="1 of 2 branches missed.">    if (finalizeModelVersion.getFullName() == null) {</span>
+<span class="nc" id="L766">      throw new BaseException(ErrorCode.INVALID_ARGUMENT, &quot;No three tier full name specified.&quot;);</span>
+    }
+<span class="pc bpc" id="L768" title="1 of 2 branches missed.">    if (finalizeModelVersion.getVersion() == null) {</span>
+<span class="nc" id="L769">      throw new BaseException(ErrorCode.INVALID_ARGUMENT, &quot;No version specified.&quot;);</span>
+    }
+
+<span class="fc" id="L772">    String fullName = finalizeModelVersion.getFullName();</span>
+<span class="fc" id="L773">    Long version = finalizeModelVersion.getVersion();</span>
+<span class="fc" id="L774">    LOGGER.info(&quot;Finalize Model Version: {}/{}&quot;, fullName, version);</span>
+    ModelVersionInfo modelVersionInfo;
+<span class="fc" id="L776">    String callerId = IdentityUtils.findPrincipalEmailAddress();</span>
+
+    Transaction tx;
+<span class="fc" id="L779">    try (Session session = sessionFactory.openSession()) {</span>
+<span class="fc" id="L780">      String[] parts = RepositoryUtils.parseFullName(fullName);</span>
+<span class="fc" id="L781">      String catalogName = parts[0];</span>
+<span class="fc" id="L782">      String schemaName = parts[1];</span>
+<span class="fc" id="L783">      String registeredModelName = parts[2];</span>
+<span class="fc" id="L784">      tx = session.beginTransaction();</span>
+      try {
+        // Get the registered model record from the database
+<span class="fc" id="L787">        UUID schemaId =</span>
+<span class="fc" id="L788">            repositories.getSchemaRepository().getSchemaId(session, catalogName, schemaName);</span>
+<span class="fc" id="L789">        ModelVersionInfoDAO origModelVersionInfoDAO =</span>
+<span class="fc" id="L790">            getModelVersionDaoOrThrow(session, schemaId, fullName, registeredModelName, version);</span>
+
+<span class="fc bfc" id="L792" title="All 2 branches covered.">        if (ModelVersionStatus.valueOf(origModelVersionInfoDAO.getStatus())</span>
+            != ModelVersionStatus.PENDING_REGISTRATION) {
+<span class="fc" id="L794">          throw new BaseException(</span>
+              ErrorCode.INVALID_ARGUMENT,
+              &quot;Model version not in a pending registration state: &quot; + fullName + &quot;/&quot; + version);
+        }
+<span class="fc" id="L798">        origModelVersionInfoDAO.setStatus(ModelVersionStatus.READY.toString());</span>
+<span class="fc" id="L799">        long updatedTime = System.currentTimeMillis();</span>
+<span class="fc" id="L800">        origModelVersionInfoDAO.setUpdatedAt(new Date(updatedTime));</span>
+<span class="fc" id="L801">        origModelVersionInfoDAO.setUpdatedBy(callerId);</span>
+<span class="fc" id="L802">        session.persist(origModelVersionInfoDAO);</span>
+<span class="fc" id="L803">        modelVersionInfo = origModelVersionInfoDAO.toModelVersionInfo();</span>
+<span class="fc" id="L804">        modelVersionInfo.setCatalogName(catalogName);</span>
+<span class="fc" id="L805">        modelVersionInfo.setSchemaName(schemaName);</span>
+<span class="fc" id="L806">        modelVersionInfo.setModelName(registeredModelName);</span>
+<span class="fc" id="L807">        tx.commit();</span>
+<span class="fc" id="L808">      } catch (RuntimeException e) {</span>
+<span class="pc bpc" id="L809" title="2 of 4 branches missed.">        if (tx != null &amp;&amp; tx.getStatus().canRollback()) {</span>
+<span class="fc" id="L810">          tx.rollback();</span>
+        }
+<span class="fc" id="L812">        throw e;</span>
+<span class="fc" id="L813">      }</span>
+<span class="fc" id="L814">    } catch (RuntimeException e) {</span>
+<span class="pc bpc" id="L815" title="1 of 2 branches missed.">      if (e instanceof BaseException) {</span>
+<span class="fc" id="L816">        throw e;</span>
+      }
+<span class="nc" id="L818">      throw new BaseException(</span>
+          ErrorCode.INTERNAL, &quot;Error updating model version: &quot; + fullName + &quot;/&quot; + version, e);
+<span class="fc" id="L820">    }</span>
+<span class="fc" id="L821">    return modelVersionInfo;</span>
+  }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.7.202105040129</span></div></body></html>

@@ -1,0 +1,245 @@
+<?xml version="1.0" encoding="utf-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>Scim2UserService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=2;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Jacoco Coverage Report</a> &gt; <a href="index.source.html" class="el_package">io.unitycatalog.server.service</a> &gt; <span class="el_source">Scim2UserService.java</span></div><h1>Scim2UserService.java</h1><pre class="source lang-java linenums">package io.unitycatalog.server.service;
+
+import static io.unitycatalog.server.model.SecurableType.METASTORE;
+import static io.unitycatalog.server.utils.Scim2Utils.asUserResource;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.linecorp.armeria.common.HttpResponse;
+import com.linecorp.armeria.common.HttpStatus;
+import com.linecorp.armeria.server.annotation.Delete;
+import com.linecorp.armeria.server.annotation.ExceptionHandler;
+import com.linecorp.armeria.server.annotation.Get;
+import com.linecorp.armeria.server.annotation.Param;
+import com.linecorp.armeria.server.annotation.Patch;
+import com.linecorp.armeria.server.annotation.Post;
+import com.linecorp.armeria.server.annotation.Produces;
+import com.linecorp.armeria.server.annotation.Put;
+import com.linecorp.armeria.server.annotation.StatusCode;
+import com.unboundid.scim2.common.exceptions.BadRequestException;
+import com.unboundid.scim2.common.exceptions.PreconditionFailedException;
+import com.unboundid.scim2.common.exceptions.ResourceConflictException;
+import com.unboundid.scim2.common.exceptions.ScimException;
+import com.unboundid.scim2.common.exceptions.ServerErrorException;
+import com.unboundid.scim2.common.filters.Filter;
+import com.unboundid.scim2.common.messages.ListResponse;
+import com.unboundid.scim2.common.messages.PatchOpType;
+import com.unboundid.scim2.common.messages.PatchOperation;
+import com.unboundid.scim2.common.messages.PatchRequest;
+import com.unboundid.scim2.common.types.Email;
+import com.unboundid.scim2.common.types.Meta;
+import com.unboundid.scim2.common.types.UserResource;
+import com.unboundid.scim2.common.utils.FilterEvaluator;
+import com.unboundid.scim2.common.utils.Parser;
+import io.unitycatalog.control.model.User;
+import io.unitycatalog.server.auth.UnityCatalogAuthorizer;
+import io.unitycatalog.server.auth.annotation.AuthorizeExpression;
+import io.unitycatalog.server.auth.annotation.AuthorizeKey;
+import io.unitycatalog.server.exception.BaseException;
+import io.unitycatalog.server.exception.ErrorCode;
+import io.unitycatalog.server.exception.GlobalExceptionHandler;
+import io.unitycatalog.server.exception.Scim2RuntimeException;
+import io.unitycatalog.server.persist.Repositories;
+import io.unitycatalog.server.persist.UserRepository;
+import io.unitycatalog.server.persist.model.CreateUser;
+import io.unitycatalog.server.persist.model.UpdateUser;
+import io.unitycatalog.server.utils.Scim2Utils;
+import java.util.Calendar;
+import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.UUID;
+
+/**
+ * SCIM2-compliant user management.
+ *
+ * &lt;p&gt;This will be a SCIM 2.0 compliant user management service. The UC User data model will be a
+ * minimal set of required fields that are necessary to support user management/exchange.
+ *
+ * &lt;ul&gt;
+ *   &lt;li&gt;id - internal unique identifier for user
+ *   &lt;li&gt;name - maps to SCIM displayName
+ *   &lt;li&gt;email - maps to SCIM primary email
+ *   &lt;li&gt;externalId - maps to SCIM external id
+ *   &lt;li&gt;userName - maps to SCIM primary email
+ * &lt;/ul&gt;
+ */
+@ExceptionHandler(GlobalExceptionHandler.class)
+public class Scim2UserService {
+  private final UserRepository userRepository;
+  private final UnityCatalogAuthorizer authorizer;
+
+<span class="fc" id="L71">  public Scim2UserService(UnityCatalogAuthorizer authorizer, Repositories repositories) {</span>
+<span class="fc" id="L72">    this.authorizer = authorizer;</span>
+<span class="fc" id="L73">    this.userRepository = repositories.getUserRepository();</span>
+<span class="fc" id="L74">  }</span>
+
+  @Get(&quot;&quot;)
+  @Produces(&quot;application/scim+json&quot;)
+  @StatusCode(200)
+  @AuthorizeExpression(&quot;#principal != null&quot;)
+  @AuthorizeKey(METASTORE)
+  public ListResponse&lt;UserResource&gt; getScimUsers(
+      @Param(&quot;filter&quot;) Optional&lt;String&gt; filter,
+      @Param(&quot;startIndex&quot;) Optional&lt;Integer&gt; startIndex,
+      @Param(&quot;count&quot;) Optional&lt;Integer&gt; count) {
+<span class="nc" id="L85">    final Filter userFilter =</span>
+<span class="nc" id="L86">        filter.filter(f -&gt; !f.isEmpty()).&lt;Filter&gt;map(this::parseFilter).orElse(null);</span>
+<span class="nc" id="L87">    FilterEvaluator filterEvaluator = new FilterEvaluator();</span>
+
+<span class="nc" id="L89">    List&lt;UserResource&gt; userResourcesList =</span>
+        userRepository
+<span class="nc" id="L91">            .listUsers(</span>
+<span class="nc" id="L92">                startIndex.orElse(1) - 1,</span>
+<span class="nc" id="L93">                count.orElse(50),</span>
+                m -&gt; match(filterEvaluator, userFilter, asUserResource(m)))
+<span class="nc" id="L95">            .stream()</span>
+<span class="nc" id="L96">            .map(Scim2Utils::asUserResource)</span>
+<span class="nc" id="L97">            .toList();</span>
+
+<span class="nc" id="L99">    Meta meta = new Meta();</span>
+<span class="nc" id="L100">    meta.setCreated(Calendar.getInstance());</span>
+<span class="nc" id="L101">    meta.setLastModified(Calendar.getInstance());</span>
+<span class="nc" id="L102">    meta.setResourceType(&quot;User&quot;);</span>
+
+<span class="nc" id="L104">    ListResponse&lt;UserResource&gt; userResources =</span>
+        new ListResponse&lt;&gt;(
+<span class="nc" id="L106">            userResourcesList.size(),</span>
+            userResourcesList,
+<span class="nc" id="L108">            startIndex.orElse(1),</span>
+<span class="nc" id="L109">            userResourcesList.size());</span>
+<span class="nc" id="L110">    userResources.setMeta(meta);</span>
+
+<span class="nc" id="L112">    return userResources;</span>
+  }
+
+  @Post(&quot;&quot;)
+  @Produces(&quot;application/scim+json&quot;)
+  @StatusCode(201)
+  @AuthorizeExpression(&quot;#authorize(#principal, #metastore, OWNER)&quot;)
+  @AuthorizeKey(METASTORE)
+  public UserResource createScimUser(UserResource userResource) {
+    // Get primary email address
+<span class="fc" id="L122">    Email primaryEmail =</span>
+<span class="fc" id="L123">        userResource.getEmails().stream()</span>
+<span class="fc" id="L124">            .filter(Email::getPrimary)</span>
+<span class="fc" id="L125">            .findFirst()</span>
+<span class="fc" id="L126">            .orElseThrow(</span>
+                () -&gt;
+                    new Scim2RuntimeException(
+                        new PreconditionFailedException(&quot;User does not have a primary email.&quot;)));
+
+<span class="fc" id="L131">    String pictureUrl = &quot;&quot;;</span>
+<span class="pc bpc" id="L132" title="2 of 4 branches missed.">    if (userResource.getPhotos() != null &amp;&amp; !userResource.getPhotos().isEmpty()) {</span>
+<span class="nc" id="L133">      pictureUrl = userResource.getPhotos().get(0).getValue().toString();</span>
+    }
+    try {
+<span class="fc" id="L136">      User user =</span>
+<span class="fc" id="L137">          userRepository.createUser(</span>
+<span class="fc" id="L138">              CreateUser.builder()</span>
+<span class="fc" id="L139">                  .name(userResource.getDisplayName())</span>
+<span class="fc" id="L140">                  .email(primaryEmail.getValue())</span>
+<span class="fc" id="L141">                  .active(userResource.getActive())</span>
+<span class="fc" id="L142">                  .externalId(userResource.getExternalId())</span>
+<span class="fc" id="L143">                  .pictureUrl(pictureUrl)</span>
+<span class="fc" id="L144">                  .build());</span>
+<span class="fc" id="L145">      return asUserResource(user);</span>
+<span class="nc" id="L146">    } catch (BaseException e) {</span>
+<span class="nc bnc" id="L147" title="All 2 branches missed.">      if (e.getErrorCode() == ErrorCode.ALREADY_EXISTS) {</span>
+<span class="nc" id="L148">        throw new Scim2RuntimeException(new ResourceConflictException(e.getMessage()));</span>
+      } else {
+<span class="nc" id="L150">        throw new Scim2RuntimeException(new BadRequestException(e.getMessage()));</span>
+      }
+    }
+  }
+
+  @Get(&quot;/{id}&quot;)
+  @Produces(&quot;application/scim+json&quot;)
+  @StatusCode(200)
+  @AuthorizeExpression(&quot;#principal != null&quot;)
+  @AuthorizeKey(METASTORE)
+  public UserResource getUser(@Param(&quot;id&quot;) String id) {
+<span class="nc" id="L161">    return asUserResource(userRepository.getUser(id));</span>
+  }
+
+  @Put(&quot;/{id}&quot;)
+  @Produces(&quot;application/scim+json&quot;)
+  @StatusCode(200)
+  @AuthorizeExpression(&quot;#authorize(#principal, #metastore, OWNER)&quot;)
+  @AuthorizeKey(METASTORE)
+  public UserResource updateUser(@Param(&quot;id&quot;) String id, UserResource userResource) {
+<span class="nc" id="L170">    UserResource user = asUserResource(userRepository.getUser(id));</span>
+<span class="nc bnc" id="L171" title="All 2 branches missed.">    if (!id.equals(userResource.getId())) {</span>
+<span class="nc" id="L172">      throw new Scim2RuntimeException(new ResourceConflictException(&quot;User id mismatch.&quot;));</span>
+    }
+
+    UpdateUser updateUser =
+<span class="nc" id="L176">        UpdateUser.builder()</span>
+<span class="nc" id="L177">            .name(userResource.getDisplayName())</span>
+<span class="nc" id="L178">            .active(userResource.getActive())</span>
+<span class="nc" id="L179">            .externalId(userResource.getExternalId())</span>
+<span class="nc" id="L180">            .build();</span>
+
+<span class="nc" id="L182">    return asUserResource(userRepository.updateUser(id, updateUser));</span>
+  }
+
+  @Delete(&quot;/{id}&quot;)
+  @AuthorizeExpression(&quot;#authorizeAny(#principal, #metastore, OWNER)&quot;)
+  @AuthorizeKey(METASTORE)
+  public HttpResponse deleteUser(@Param(&quot;id&quot;) String id) {
+<span class="fc" id="L189">    User user = userRepository.getUser(id);</span>
+<span class="fc" id="L190">    authorizer.clearAuthorizationsForPrincipal(</span>
+<span class="fc" id="L191">        UUID.fromString(Objects.requireNonNull(user.getId())));</span>
+<span class="fc" id="L192">    userRepository.deleteUser(user.getId());</span>
+<span class="fc" id="L193">    return HttpResponse.of(HttpStatus.OK);</span>
+  }
+
+  @Patch(&quot;/{id}&quot;)
+  public HttpResponse patchUser(@Param(&quot;id&quot;) String id, PatchRequest patchRequest) {
+<span class="nc" id="L198">    return patchRequest.getOperations().stream()</span>
+<span class="nc" id="L199">        .filter(</span>
+            op -&gt;
+                op.getOpType() == PatchOpType.REPLACE
+                    &amp;&amp; op.getPath() == null) // Only support patch for okta
+<span class="nc" id="L203">        .findFirst()</span>
+<span class="nc" id="L204">        .map(op -&gt; handleUserUpdate(id, op))</span>
+<span class="nc" id="L205">        .orElse(HttpResponse.of(HttpStatus.NOT_IMPLEMENTED));</span>
+  }
+
+  private HttpResponse handleUserUpdate(String id, PatchOperation operation) {
+    try {
+<span class="nc" id="L210">      Boolean value = operation.getValues(Boolean.class).get(0);</span>
+<span class="nc" id="L211">      UpdateUser updateUser = UpdateUser.builder().active(value).build();</span>
+<span class="nc" id="L212">      userRepository.updateUser(id, updateUser);</span>
+<span class="nc" id="L213">      return HttpResponse.of(HttpStatus.OK);</span>
+<span class="nc" id="L214">    } catch (ScimException | JsonProcessingException e) {</span>
+<span class="nc" id="L215">      return handleExceptionDuringPatch(e);</span>
+    }
+  }
+
+  private HttpResponse handleExceptionDuringPatch(Exception ex) {
+<span class="nc bnc" id="L220" title="All 2 branches missed.">    if (ex instanceof ScimException) {</span>
+<span class="nc" id="L221">      throw new Scim2RuntimeException((ScimException) ex);</span>
+    } else {
+<span class="nc" id="L223">      throw new Scim2RuntimeException(</span>
+<span class="nc" id="L224">          new ServerErrorException(&quot;Problem with patch operation&quot;, ex.getMessage(), ex));</span>
+    }
+  }
+
+  private Filter parseFilter(String filter) {
+    try {
+<span class="nc" id="L230">      return Parser.parseFilter(filter);</span>
+<span class="nc" id="L231">    } catch (BadRequestException e) {</span>
+<span class="nc" id="L232">      throw new Scim2RuntimeException(e);</span>
+    }
+  }
+
+  private boolean match(FilterEvaluator filterEvaluator, Filter userFilter, UserResource user) {
+    try {
+<span class="nc bnc" id="L238" title="All 2 branches missed.">      return (userFilter == null</span>
+<span class="nc bnc" id="L239" title="All 2 branches missed.">          || userFilter.visit(filterEvaluator, user.asGenericScimResource().getObjectNode()));</span>
+<span class="nc" id="L240">    } catch (ScimException e) {</span>
+<span class="nc" id="L241">      throw new Scim2RuntimeException(e);</span>
+    }
+  }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.7.202105040129</span></div></body></html>

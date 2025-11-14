@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>Scim2SelfService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=2;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Jacoco Coverage Report</a> &gt; <a href="index.source.html" class="el_package">io.unitycatalog.server.service</a> &gt; <span class="el_source">Scim2SelfService.java</span></div><h1>Scim2SelfService.java</h1><pre class="source lang-java linenums">package io.unitycatalog.server.service;
+
+import static io.unitycatalog.server.model.SecurableType.METASTORE;
+import static io.unitycatalog.server.utils.Scim2Utils.asUserResource;
+
+import com.auth0.jwt.interfaces.Claim;
+import com.auth0.jwt.interfaces.DecodedJWT;
+import com.linecorp.armeria.server.ServiceRequestContext;
+import com.linecorp.armeria.server.annotation.ExceptionHandler;
+import com.linecorp.armeria.server.annotation.Get;
+import com.linecorp.armeria.server.annotation.Produces;
+import com.linecorp.armeria.server.annotation.StatusCode;
+import com.unboundid.scim2.common.exceptions.BadRequestException;
+import com.unboundid.scim2.common.types.UserResource;
+import io.unitycatalog.server.auth.UnityCatalogAuthorizer;
+import io.unitycatalog.server.auth.annotation.AuthorizeExpression;
+import io.unitycatalog.server.auth.annotation.AuthorizeKey;
+import io.unitycatalog.server.exception.GlobalExceptionHandler;
+import io.unitycatalog.server.exception.Scim2RuntimeException;
+import io.unitycatalog.server.persist.Repositories;
+import io.unitycatalog.server.persist.UserRepository;
+import io.unitycatalog.server.security.JwtClaim;
+
+@ExceptionHandler(GlobalExceptionHandler.class)
+public class Scim2SelfService {
+  private final UserRepository userRepository;
+  private final UnityCatalogAuthorizer authorizer;
+
+<span class="fc" id="L29">  public Scim2SelfService(UnityCatalogAuthorizer authorizer, Repositories repositories) {</span>
+<span class="fc" id="L30">    this.authorizer = authorizer;</span>
+<span class="fc" id="L31">    this.userRepository = repositories.getUserRepository();</span>
+<span class="fc" id="L32">  }</span>
+
+  @Get(&quot;&quot;)
+  @Produces(&quot;application/scim+json&quot;)
+  @StatusCode(200)
+  @AuthorizeExpression(&quot;#principal != null&quot;)
+  @AuthorizeKey(METASTORE)
+  public UserResource getCurrentUser() {
+    // TODO: will make this a util method in the access control PR
+<span class="nc" id="L41">    ServiceRequestContext ctx = ServiceRequestContext.current();</span>
+<span class="nc" id="L42">    DecodedJWT decodedJWT = ctx.attr(AuthDecorator.DECODED_JWT_ATTR);</span>
+<span class="nc bnc" id="L43" title="All 2 branches missed.">    if (decodedJWT != null) {</span>
+<span class="nc" id="L44">      Claim sub = decodedJWT.getClaim(JwtClaim.SUBJECT.key());</span>
+<span class="nc" id="L45">      return asUserResource(userRepository.getUserByEmail(sub.asString()));</span>
+    } else {
+<span class="nc" id="L47">      throw new Scim2RuntimeException(new BadRequestException(&quot;No user found.&quot;));</span>
+    }
+  }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.7.202105040129</span></div></body></html>

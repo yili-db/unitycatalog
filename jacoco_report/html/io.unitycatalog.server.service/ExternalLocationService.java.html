@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="utf-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ExternalLocationService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=2;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Jacoco Coverage Report</a> &gt; <a href="index.source.html" class="el_package">io.unitycatalog.server.service</a> &gt; <span class="el_source">ExternalLocationService.java</span></div><h1>ExternalLocationService.java</h1><pre class="source lang-java linenums">package io.unitycatalog.server.service;
+
+import static io.unitycatalog.server.model.SecurableType.METASTORE;
+
+import com.linecorp.armeria.common.HttpResponse;
+import com.linecorp.armeria.common.HttpStatus;
+import com.linecorp.armeria.server.annotation.Delete;
+import com.linecorp.armeria.server.annotation.ExceptionHandler;
+import com.linecorp.armeria.server.annotation.Get;
+import com.linecorp.armeria.server.annotation.Param;
+import com.linecorp.armeria.server.annotation.Patch;
+import com.linecorp.armeria.server.annotation.Post;
+import io.unitycatalog.server.auth.UnityCatalogAuthorizer;
+import io.unitycatalog.server.auth.annotation.AuthorizeExpression;
+import io.unitycatalog.server.auth.annotation.AuthorizeKey;
+import io.unitycatalog.server.exception.GlobalExceptionHandler;
+import io.unitycatalog.server.model.CreateExternalLocation;
+import io.unitycatalog.server.model.ListExternalLocationsResponse;
+import io.unitycatalog.server.model.UpdateExternalLocation;
+import io.unitycatalog.server.persist.ExternalLocationRepository;
+import io.unitycatalog.server.persist.Repositories;
+import io.unitycatalog.server.persist.dao.ExternalLocationDAO;
+import java.util.Optional;
+import lombok.SneakyThrows;
+
+@ExceptionHandler(GlobalExceptionHandler.class)
+public class ExternalLocationService extends AuthorizedService {
+  private final ExternalLocationRepository externalLocationRepository;
+
+<span class="pc" id="L30">  @SneakyThrows</span>
+  public ExternalLocationService(UnityCatalogAuthorizer authorizer, Repositories repositories) {
+<span class="fc" id="L32">    super(authorizer, repositories.getUserRepository());</span>
+<span class="fc" id="L33">    this.externalLocationRepository = repositories.getExternalLocationRepository();</span>
+<span class="fc" id="L34">  }</span>
+
+  @Post(&quot;&quot;)
+  // TODO: Do we add CREATE_EXTERNAL_LOCATION
+  @AuthorizeExpression(&quot;#authorize(#principal, #metastore, OWNER)&quot;)
+  @AuthorizeKey(METASTORE)
+  public HttpResponse createExternalLocation(CreateExternalLocation createExternalLocation) {
+<span class="fc" id="L41">    ExternalLocationDAO externalLocationDAO =</span>
+<span class="fc" id="L42">        externalLocationRepository.addExternalLocation(createExternalLocation);</span>
+<span class="fc" id="L43">    initializeBasicAuthorization(externalLocationDAO.getId().toString());</span>
+<span class="fc" id="L44">    return HttpResponse.ofJson(externalLocationDAO.toExternalLocationInfo());</span>
+  }
+
+  @Get(&quot;&quot;)
+  @AuthorizeExpression(&quot;#authorize(#principal, #metastore, OWNER)&quot;)
+  @AuthorizeKey(METASTORE)
+  public HttpResponse listExternalLocations(
+      @Param(&quot;max_results&quot;) Optional&lt;Integer&gt; maxResults,
+      @Param(&quot;page_token&quot;) Optional&lt;String&gt; pageToken) {
+<span class="fc" id="L53">    ListExternalLocationsResponse locations =</span>
+<span class="fc" id="L54">        externalLocationRepository.listExternalLocations(maxResults, pageToken);</span>
+<span class="fc" id="L55">    return HttpResponse.ofJson(locations);</span>
+  }
+
+  @Get(&quot;/{name}&quot;)
+  @AuthorizeExpression(&quot;#authorize(#principal, #metastore, OWNER)&quot;)
+  @AuthorizeKey(METASTORE)
+  public HttpResponse getExternalLocation(@Param(&quot;name&quot;) String name) {
+<span class="fc" id="L62">    return HttpResponse.ofJson(externalLocationRepository.getExternalLocation(name));</span>
+  }
+
+  @Patch(&quot;/{name}&quot;)
+  @AuthorizeExpression(&quot;#authorize(#principal, #externalLocation, OWNER)&quot;)
+  @AuthorizeKey(METASTORE)
+  public HttpResponse updateExternalLocation(
+      @Param(&quot;name&quot;) String name, UpdateExternalLocation updateRequest) {
+<span class="fc" id="L70">    return HttpResponse.ofJson(</span>
+<span class="fc" id="L71">        externalLocationRepository.updateExternalLocation(name, updateRequest));</span>
+  }
+
+  @Delete(&quot;/{name}&quot;)
+  @AuthorizeExpression(&quot;#authorize(#principal, #metastore, OWNER)&quot;)
+  @AuthorizeKey(METASTORE)
+  public HttpResponse deleteExternalLocation(@Param(&quot;name&quot;) String name) {
+<span class="fc" id="L78">    ExternalLocationDAO externalLocationDAO =</span>
+<span class="fc" id="L79">        externalLocationRepository.deleteExternalLocation(name);</span>
+<span class="fc" id="L80">    removeAuthorizations(externalLocationDAO.getId().toString());</span>
+<span class="fc" id="L81">    return HttpResponse.of(HttpStatus.OK);</span>
+  }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.7.202105040129</span></div></body></html>

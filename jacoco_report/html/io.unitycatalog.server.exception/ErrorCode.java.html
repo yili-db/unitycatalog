@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ErrorCode.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=2;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Jacoco Coverage Report</a> &gt; <a href="index.source.html" class="el_package">io.unitycatalog.server.exception</a> &gt; <span class="el_source">ErrorCode.java</span></div><h1>ErrorCode.java</h1><pre class="source lang-java linenums">package io.unitycatalog.server.exception;
+
+import com.linecorp.armeria.common.HttpStatus;
+import lombok.Getter;
+
+<span class="fc" id="L6">@Getter</span>
+public enum ErrorCode {
+<span class="fc" id="L8">  OK(0, 200),</span>
+<span class="fc" id="L9">  CANCELLED(1, 499),</span>
+<span class="fc" id="L10">  UNKNOWN(2, 500),</span>
+<span class="fc" id="L11">  INVALID_ARGUMENT(3, 400),</span>
+<span class="fc" id="L12">  DEADLINE_EXCEEDED(4, 504),</span>
+<span class="fc" id="L13">  NOT_FOUND(5, 404),</span>
+<span class="fc" id="L14">  ALREADY_EXISTS(6, 409),</span>
+<span class="fc" id="L15">  PERMISSION_DENIED(7, 403),</span>
+<span class="fc" id="L16">  UNAUTHENTICATED(16, 401),</span>
+<span class="fc" id="L17">  RESOURCE_EXHAUSTED(8, 429),</span>
+<span class="fc" id="L18">  FAILED_PRECONDITION(9, 400),</span>
+<span class="fc" id="L19">  ABORTED(10, 409),</span>
+<span class="fc" id="L20">  OUT_OF_RANGE(11, 400),</span>
+<span class="fc" id="L21">  UNIMPLEMENTED(12, 501),</span>
+<span class="fc" id="L22">  INTERNAL(13, 500),</span>
+<span class="fc" id="L23">  UNAVAILABLE(14, 503),</span>
+<span class="fc" id="L24">  DATA_LOSS(15, 500);</span>
+
+<span class="nc" id="L26">  private final int code;</span>
+<span class="fc" id="L27">  private final HttpStatus httpStatus;</span>
+
+<span class="fc" id="L29">  ErrorCode(int code, int httpStatus) {</span>
+<span class="fc" id="L30">    this.code = code;</span>
+<span class="fc" id="L31">    this.httpStatus = HttpStatus.valueOf(httpStatus);</span>
+<span class="fc" id="L32">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.7.202105040129</span></div></body></html>

@@ -1,0 +1,268 @@
+<?xml version="1.0" encoding="utf-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AuthService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=2;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Jacoco Coverage Report</a> &gt; <a href="index.source.html" class="el_package">io.unitycatalog.server.service</a> &gt; <span class="el_source">AuthService.java</span></div><h1>AuthService.java</h1><pre class="source lang-java linenums">package io.unitycatalog.server.service;
+
+import com.auth0.jwt.JWT;
+import com.auth0.jwt.JWTVerifier;
+import com.auth0.jwt.interfaces.DecodedJWT;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.linecorp.armeria.common.AggregatedHttpRequest;
+import com.linecorp.armeria.common.Cookie;
+import com.linecorp.armeria.common.HttpData;
+import com.linecorp.armeria.common.HttpHeaderNames;
+import com.linecorp.armeria.common.HttpRequest;
+import com.linecorp.armeria.common.HttpResponse;
+import com.linecorp.armeria.common.HttpStatus;
+import com.linecorp.armeria.common.MediaType;
+import com.linecorp.armeria.common.QueryParams;
+import com.linecorp.armeria.common.ResponseHeaders;
+import com.linecorp.armeria.common.ResponseHeadersBuilder;
+import com.linecorp.armeria.common.annotation.Nullable;
+import com.linecorp.armeria.server.ServiceRequestContext;
+import com.linecorp.armeria.server.annotation.ExceptionHandler;
+import com.linecorp.armeria.server.annotation.Param;
+import com.linecorp.armeria.server.annotation.Post;
+import com.linecorp.armeria.server.annotation.RequestConverter;
+import com.linecorp.armeria.server.annotation.RequestConverterFunction;
+import io.unitycatalog.control.model.AccessTokenType;
+import io.unitycatalog.control.model.GrantType;
+import io.unitycatalog.control.model.OAuthTokenExchangeForm;
+import io.unitycatalog.control.model.OAuthTokenExchangeInfo;
+import io.unitycatalog.control.model.TokenEndpointExtensionType;
+import io.unitycatalog.control.model.TokenType;
+import io.unitycatalog.control.model.User;
+import io.unitycatalog.server.exception.ErrorCode;
+import io.unitycatalog.server.exception.GlobalExceptionHandler;
+import io.unitycatalog.server.exception.OAuthInvalidRequestException;
+import io.unitycatalog.server.persist.Repositories;
+import io.unitycatalog.server.persist.UserRepository;
+import io.unitycatalog.server.security.JwtClaim;
+import io.unitycatalog.server.security.SecurityContext;
+import io.unitycatalog.server.utils.JwksOperations;
+import io.unitycatalog.server.utils.ServerProperties;
+import io.unitycatalog.server.utils.ServerProperties.Property;
+import java.lang.reflect.ParameterizedType;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.util.Map;
+import java.util.Optional;
+import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+@ExceptionHandler(GlobalExceptionHandler.class)
+public class AuthService {
+
+<span class="fc" id="L54">  private static final Logger LOGGER = LoggerFactory.getLogger(AuthService.class);</span>
+  private final UserRepository userRepository;
+
+  private final SecurityContext securityContext;
+  private final JwksOperations jwksOperations;
+  private final ServerProperties serverProperties;
+
+  private static final String EMPTY_RESPONSE = &quot;{}&quot;;
+
+  public AuthService(
+      SecurityContext securityContext,
+      ServerProperties serverProperties,
+<span class="fc" id="L66">      Repositories repositories) {</span>
+<span class="fc" id="L67">    this.securityContext = securityContext;</span>
+<span class="fc" id="L68">    this.jwksOperations = new JwksOperations(securityContext);</span>
+<span class="fc" id="L69">    this.serverProperties = serverProperties;</span>
+<span class="fc" id="L70">    this.userRepository = repositories.getUserRepository();</span>
+<span class="fc" id="L71">  }</span>
+
+  /**
+   * OAuth token exchange.
+   *
+   * &lt;p&gt;Performs an OAuth token exchange for an access-token. Specifically this endpoint accepts a
+   * &quot;token-exchange&quot; grant type (urn:ietf:params:oauth:grant-type:token-exchange) and along with
+   * either an identity-token (urn:ietf:params:oauth:token-type:id_token) or a access-token
+   * (urn:ietf:params:oauth:token-type:access_token), validates the token signature using OIDC
+   * discovery and JWKs, and then creates a new access-token.
+   *
+   * &lt;ul&gt;
+   *   &lt;li&gt;grant_type: urn:ietf:params:oauth:grant-type:token-exchange
+   *   &lt;li&gt;requested_token_type: urn:ietf:params:oauth:token-type:access_token or
+   *       urn:ietf:params:oauth:token-type:id_token
+   *   &lt;li&gt;subject_token_type: urn:ietf:params:oauth:token-type:access_token
+   *   &lt;li&gt;subject_token: The incoming token (typically from an identity provider)
+   *   &lt;li&gt;actor_token_type: Not supported
+   *   &lt;li&gt;actor_token: Not supported
+   *   &lt;li&gt;scope: Not supported
+   * &lt;/ul&gt;
+   *
+   * &lt;p&gt;Currently the issuer for the incoming token to validate is not constrained to a specific
+   * identity provider, rather as long as the token is signed by the matching issuer the validation
+   * succeeds.
+   *
+   * &lt;p&gt;Eventually this should be constrained to a specific identity provider and even require that
+   * the incoming identity (email, subject) matches a specific user in the system, once a user
+   * management system is in place.
+   *
+   * @param ext Specifies whether the issued token should be set as a cookie.
+   * @param form The OAuth 2.0 token exchange request form.
+   * @return The token exchange response
+   */
+  @Post(&quot;/tokens&quot;)
+  public HttpResponse grantToken(
+      @Param(&quot;ext&quot;) Optional&lt;TokenEndpointExtensionType&gt; ext,
+      @RequestConverter(ToOAuthTokenExchangeFormConverter.class) OAuthTokenExchangeForm form) {
+<span class="nc" id="L109">    LOGGER.debug(&quot;Got token: {}&quot;, form);</span>
+
+<span class="nc bnc" id="L111" title="All 2 branches missed.">    if (GrantType.TOKEN_EXCHANGE != form.getGrantType()) {</span>
+<span class="nc" id="L112">      throw new OAuthInvalidRequestException(</span>
+<span class="nc" id="L113">          ErrorCode.INVALID_ARGUMENT, &quot;Unsupported grant type: &quot; + form.getGrantType());</span>
+    }
+
+<span class="nc bnc" id="L116" title="All 2 branches missed.">    if (TokenType.ACCESS_TOKEN != form.getRequestedTokenType()) {</span>
+<span class="nc" id="L117">      throw new OAuthInvalidRequestException(</span>
+          ErrorCode.INVALID_ARGUMENT,
+<span class="nc" id="L119">          &quot;Unsupported requested token type: &quot; + form.getRequestedTokenType());</span>
+    }
+
+<span class="nc bnc" id="L122" title="All 2 branches missed.">    if (form.getSubjectTokenType() == null) {</span>
+<span class="nc" id="L123">      throw new OAuthInvalidRequestException(</span>
+          ErrorCode.INVALID_ARGUMENT, &quot;Subject token type is required but was not specified&quot;);
+    }
+
+<span class="nc bnc" id="L127" title="All 2 branches missed.">    if (form.getActorTokenType() != null) {</span>
+<span class="nc" id="L128">      throw new OAuthInvalidRequestException(</span>
+          ErrorCode.INVALID_ARGUMENT, &quot;Actor tokens not currently supported&quot;);
+    }
+
+<span class="nc" id="L132">    boolean authorizationEnabled = this.serverProperties.isAuthorizationEnabled();</span>
+<span class="nc bnc" id="L133" title="All 2 branches missed.">    if (!authorizationEnabled) {</span>
+<span class="nc" id="L134">      throw new OAuthInvalidRequestException(</span>
+          ErrorCode.INVALID_ARGUMENT, &quot;Authorization is disabled&quot;);
+    }
+
+<span class="nc" id="L138">    DecodedJWT decodedJWT = JWT.decode(form.getSubjectToken());</span>
+<span class="nc" id="L139">    String issuer = decodedJWT.getIssuer();</span>
+<span class="nc" id="L140">    String keyId = decodedJWT.getKeyId();</span>
+
+<span class="nc" id="L142">    LOGGER.debug(&quot;Validating token for issuer: {} and keyId: {}&quot;, issuer, keyId);</span>
+
+<span class="nc" id="L144">    JWTVerifier jwtVerifier = jwksOperations.verifierForIssuerAndKey(issuer, keyId);</span>
+<span class="nc" id="L145">    decodedJWT = jwtVerifier.verify(decodedJWT);</span>
+<span class="nc" id="L146">    verifyPrincipal(decodedJWT);</span>
+
+<span class="nc" id="L148">    LOGGER.debug(&quot;Validated. Creating access token.&quot;);</span>
+
+<span class="nc" id="L150">    String accessToken = securityContext.createAccessToken(decodedJWT);</span>
+
+<span class="nc" id="L152">    OAuthTokenExchangeInfo tokenExchangeInfo =</span>
+        new OAuthTokenExchangeInfo()
+<span class="nc" id="L154">            .accessToken(accessToken)</span>
+<span class="nc" id="L155">            .issuedTokenType(TokenType.ACCESS_TOKEN)</span>
+<span class="nc" id="L156">            .tokenType(AccessTokenType.BEARER);</span>
+
+    // Set token as cookie if ext param is set to cookie
+<span class="nc" id="L159">    ResponseHeadersBuilder responseHeaders = ResponseHeaders.builder(HttpStatus.OK);</span>
+<span class="nc" id="L160">    ext.ifPresent(</span>
+        e -&gt; {
+          if (e.equals(TokenEndpointExtensionType.COOKIE)) {
+            // Set cookie timeout to 5 days by default if not present in server.properties
+            String cookieTimeout = this.serverProperties.get(Property.COOKIE_TIMEOUT);
+            Cookie cookie =
+                createCookie(AuthDecorator.UC_TOKEN_KEY, accessToken, &quot;/&quot;, cookieTimeout);
+            responseHeaders.add(HttpHeaderNames.SET_COOKIE, cookie.toSetCookieHeader());
+          }
+        });
+
+<span class="nc" id="L171">    return HttpResponse.ofJson(responseHeaders.build(), tokenExchangeInfo);</span>
+  }
+
+  @Post(&quot;/logout&quot;)
+  public HttpResponse logout(HttpRequest request) {
+<span class="fc" id="L176">    return request.headers().cookies().stream()</span>
+<span class="fc" id="L177">        .filter(c -&gt; c.name().equals(AuthDecorator.UC_TOKEN_KEY))</span>
+<span class="fc" id="L178">        .findFirst()</span>
+<span class="fc" id="L179">        .map(</span>
+            authorizationCookie -&gt; {
+              Cookie expiredCookie = createCookie(AuthDecorator.UC_TOKEN_KEY, &quot;&quot;, &quot;/&quot;, &quot;PT0S&quot;);
+              ResponseHeaders headers =
+                  ResponseHeaders.builder()
+                      .status(HttpStatus.OK)
+                      .add(HttpHeaderNames.SET_COOKIE, expiredCookie.toSetCookieHeader())
+                      .contentType(MediaType.JSON)
+                      .build();
+              // Armeria requires a non-empty response payload, so an empty JSON is sent
+              return HttpResponse.of(headers, HttpData.ofUtf8(EMPTY_RESPONSE));
+            })
+<span class="fc" id="L191">        .orElse(HttpResponse.of(HttpStatus.OK, MediaType.JSON, EMPTY_RESPONSE));</span>
+  }
+
+  private void verifyPrincipal(DecodedJWT decodedJWT) {
+<span class="nc" id="L195">    String subject =</span>
+        decodedJWT
+<span class="nc" id="L197">            .getClaims()</span>
+<span class="nc" id="L198">            .getOrDefault(JwtClaim.EMAIL.key(), decodedJWT.getClaim(JwtClaim.SUBJECT.key()))</span>
+<span class="nc" id="L199">            .asString();</span>
+
+<span class="nc" id="L201">    LOGGER.debug(&quot;Validating principal: {}&quot;, subject);</span>
+
+<span class="nc bnc" id="L203" title="All 2 branches missed.">    if (subject.equals(&quot;admin&quot;)) {</span>
+<span class="nc" id="L204">      LOGGER.debug(&quot;admin always allowed&quot;);</span>
+<span class="nc" id="L205">      return;</span>
+    }
+
+    try {
+<span class="nc" id="L209">      User user = userRepository.getUserByEmail(subject);</span>
+<span class="nc bnc" id="L210" title="All 4 branches missed.">      if (user != null &amp;&amp; user.getState() == User.StateEnum.ENABLED) {</span>
+<span class="nc" id="L211">        LOGGER.debug(&quot;Principal {} is enabled&quot;, subject);</span>
+<span class="nc" id="L212">        return;</span>
+      }
+<span class="nc" id="L214">    } catch (Exception e) {</span>
+      // IGNORE
+<span class="nc" id="L216">    }</span>
+
+<span class="nc" id="L218">    throw new OAuthInvalidRequestException(</span>
+        ErrorCode.INVALID_ARGUMENT, &quot;User not allowed: &quot; + subject);
+  }
+
+  private Cookie createCookie(String key, String value, String path, String maxAge) {
+<span class="fc" id="L223">    return Cookie.secureBuilder(key, value)</span>
+<span class="fc" id="L224">        .path(path)</span>
+<span class="fc" id="L225">        .maxAge(Duration.parse(maxAge).getSeconds())</span>
+<span class="fc" id="L226">        .build();</span>
+  }
+
+  // NOTE:
+  // When specifying `application/x-www-form-urlencoded` as the content type in the OpenAPI schema,
+  // the OpenAPI Generator does not create request models from the schema.
+  // Moreover, directly accessing parameters from the body without a model causes issues with
+  // Armeria, particularly when the `ext` query parameter is included.
+  //
+  // To resolve this, instead of redefining a request model solely for Armeria's parameter
+  // injection,
+  // a `RequestConverterFunction` for `OAuthTokenExchangeRequest` is implemented here.
+  // This approach ensures a single model is used across both the `controlApi` and `cli` projects,
+  // preserving the principle of a single source of truth.
+  //
+  // SEE:
+  // - https://armeria.dev/docs/server-annotated-service/#getting-a-query-parameter
+  // - https://armeria.dev/docs/server-annotated-service/#injecting-a-parameter-as-an-enum-type
+  private static class ToOAuthTokenExchangeFormConverter implements RequestConverterFunction {
+<span class="fc" id="L245">    private static final ObjectMapper mapper = new ObjectMapper();</span>
+
+    @Override
+    public Object convertRequest(
+        ServiceRequestContext ctx,
+        AggregatedHttpRequest request,
+        Class&lt;?&gt; expectedResultType,
+        @Nullable ParameterizedType expectedParameterizedResultType) {
+<span class="nc" id="L253">      MediaType contentType = request.contentType();</span>
+<span class="nc bnc" id="L254" title="All 4 branches missed.">      if (expectedResultType == OAuthTokenExchangeForm.class</span>
+          &amp;&amp; contentType != null
+<span class="nc bnc" id="L256" title="All 2 branches missed.">          &amp;&amp; contentType.belongsTo(MediaType.FORM_DATA)) {</span>
+<span class="nc" id="L257">        Map&lt;String, String&gt; form =</span>
+<span class="nc" id="L258">            QueryParams.fromQueryString(</span>
+<span class="nc" id="L259">                    request.content(contentType.charset(StandardCharsets.UTF_8)))</span>
+<span class="nc" id="L260">                .stream()</span>
+<span class="nc" id="L261">                .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));</span>
+<span class="nc" id="L262">        return mapper.convertValue(form, OAuthTokenExchangeForm.class);</span>
+      }
+<span class="nc" id="L264">      return RequestConverterFunction.fallthrough();</span>
+    }
+  }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.7.202105040129</span></div></body></html>

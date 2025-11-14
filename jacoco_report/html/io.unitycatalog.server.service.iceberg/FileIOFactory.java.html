@@ -1,0 +1,129 @@
+<?xml version="1.0" encoding="utf-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>FileIOFactory.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=2;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Jacoco Coverage Report</a> &gt; <a href="index.source.html" class="el_package">io.unitycatalog.server.service.iceberg</a> &gt; <span class="el_source">FileIOFactory.java</span></div><h1>FileIOFactory.java</h1><pre class="source lang-java linenums">package io.unitycatalog.server.service.iceberg;
+
+import com.google.auth.oauth2.AccessToken;
+import io.unitycatalog.server.exception.BaseException;
+import io.unitycatalog.server.service.credential.CloudCredentialVendor;
+import io.unitycatalog.server.utils.ServerProperties;
+import io.unitycatalog.server.service.credential.CredentialContext;
+import io.unitycatalog.server.service.credential.aws.S3StorageConfig;
+import io.unitycatalog.server.service.credential.azure.ADLSLocationUtils;
+import io.unitycatalog.server.service.credential.azure.AzureCredential;
+import lombok.SneakyThrows;
+import org.apache.iceberg.aws.s3.S3FileIO;
+import org.apache.iceberg.azure.AzureProperties;
+import org.apache.iceberg.azure.adlsv2.ADLSFileIO;
+import org.apache.iceberg.gcp.GCPProperties;
+import org.apache.iceberg.gcp.gcs.GCSFileIO;
+import org.apache.iceberg.io.FileIO;
+import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider;
+import software.amazon.awssdk.auth.credentials.AwsSessionCredentials;
+import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
+import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
+import software.amazon.awssdk.regions.Region;
+import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.sts.model.Credentials;
+
+import java.net.URI;
+import java.util.Map;
+import java.util.Set;
+
+import static io.unitycatalog.server.utils.Constants.URI_SCHEME_ABFS;
+import static io.unitycatalog.server.utils.Constants.URI_SCHEME_ABFSS;
+import static io.unitycatalog.server.utils.Constants.URI_SCHEME_GS;
+import static io.unitycatalog.server.utils.Constants.URI_SCHEME_S3;
+
+public class FileIOFactory {
+
+  private final CloudCredentialVendor cloudCredentialVendor;
+  private final Map&lt;String, S3StorageConfig&gt; s3Configurations;
+
+  public FileIOFactory(CloudCredentialVendor cloudCredentialVendor,
+<span class="fc" id="L41">      ServerProperties serverProperties) {</span>
+<span class="fc" id="L42">    this.cloudCredentialVendor = cloudCredentialVendor;</span>
+<span class="fc" id="L43">    this.s3Configurations = serverProperties.getS3Configurations();</span>
+<span class="fc" id="L44">  }</span>
+
+  // TODO: Cache fileIOs
+  public FileIO getFileIO(URI tableLocationUri) {
+<span class="pc bpc" id="L48" title="3 of 4 branches missed.">    return switch (tableLocationUri.getScheme()) {</span>
+<span class="nc" id="L49">      case URI_SCHEME_ABFS, URI_SCHEME_ABFSS -&gt; getADLSFileIO(tableLocationUri);</span>
+<span class="nc" id="L50">      case URI_SCHEME_GS -&gt; getGCSFileIO(tableLocationUri);</span>
+<span class="nc" id="L51">      case URI_SCHEME_S3 -&gt; getS3FileIO(tableLocationUri);</span>
+      // TODO: should we default/fallback to HadoopFileIO ?
+<span class="fc" id="L53">      default -&gt; new SimpleLocalFileIO();</span>
+    };
+  }
+
+  protected ADLSFileIO getADLSFileIO(URI tableLocationUri) {
+<span class="nc" id="L58">    CredentialContext credentialContext = getCredentialContextFromTableLocation(tableLocationUri);</span>
+<span class="nc" id="L59">    AzureCredential credential = cloudCredentialVendor.vendAzureCredential(credentialContext);</span>
+<span class="nc" id="L60">    ADLSLocationUtils.ADLSLocationParts locationParts =</span>
+<span class="nc" id="L61">        ADLSLocationUtils.parseLocation(tableLocationUri.toString());</span>
+
+    // NOTE: when fileio caching is implemented, need to set/deal with expiry here
+<span class="nc" id="L64">    Map&lt;String, String&gt; properties =</span>
+<span class="nc" id="L65">        Map.of(AzureProperties.ADLS_SAS_TOKEN_PREFIX + locationParts.account(),</span>
+<span class="nc" id="L66">            credential.getSasToken());</span>
+
+<span class="nc" id="L68">    ADLSFileIO result = new ADLSFileIO();</span>
+<span class="nc" id="L69">    result.initialize(properties);</span>
+<span class="nc" id="L70">    return result;</span>
+  }
+
+<span class="nc" id="L73">  @SneakyThrows</span>
+  protected GCSFileIO getGCSFileIO(URI tableLocationUri) {
+<span class="nc" id="L75">    CredentialContext credentialContext = getCredentialContextFromTableLocation(tableLocationUri);</span>
+<span class="nc" id="L76">    AccessToken gcpToken = cloudCredentialVendor.vendGcpToken(credentialContext);</span>
+
+    // NOTE: when fileio caching is implemented, need to set/deal with expiry here
+<span class="nc" id="L79">    Map&lt;String, String&gt; properties =</span>
+<span class="nc" id="L80">        Map.of(GCPProperties.GCS_OAUTH2_TOKEN, gcpToken.getTokenValue());</span>
+
+<span class="nc" id="L82">    GCSFileIO result = new GCSFileIO();</span>
+<span class="nc" id="L83">    result.initialize(properties);</span>
+<span class="nc" id="L84">    return result;</span>
+  }
+
+  protected S3FileIO getS3FileIO(URI tableLocationUri) {
+<span class="nc" id="L88">    CredentialContext context = getCredentialContextFromTableLocation(tableLocationUri);</span>
+<span class="nc" id="L89">    S3StorageConfig s3StorageConfig = s3Configurations.get(context.getStorageBase());</span>
+
+<span class="nc" id="L91">    S3FileIO s3FileIO =</span>
+        new S3FileIO(() -&gt; getS3Client(getAwsCredentialsProvider(context),
+            s3StorageConfig.getRegion()));
+
+<span class="nc" id="L95">    s3FileIO.initialize(Map.of());</span>
+
+<span class="nc" id="L97">    return s3FileIO;</span>
+  }
+
+  protected S3Client getS3Client(AwsCredentialsProvider awsCredentialsProvider, String region) {
+<span class="nc" id="L101">    return S3Client.builder()</span>
+<span class="nc" id="L102">        .region(Region.of(region))</span>
+<span class="nc" id="L103">        .credentialsProvider(awsCredentialsProvider)</span>
+<span class="nc" id="L104">        .forcePathStyle(false)</span>
+<span class="nc" id="L105">        .build();</span>
+  }
+
+  private AwsCredentialsProvider getAwsCredentialsProvider(CredentialContext context) {
+    try {
+<span class="nc" id="L110">      Credentials awsSessionCredentials = cloudCredentialVendor.vendAwsCredential(context);</span>
+<span class="nc" id="L111">      return StaticCredentialsProvider.create(</span>
+<span class="nc" id="L112">          AwsSessionCredentials.create(</span>
+<span class="nc" id="L113">              awsSessionCredentials.accessKeyId(),</span>
+<span class="nc" id="L114">              awsSessionCredentials.secretAccessKey(),</span>
+<span class="nc" id="L115">              awsSessionCredentials.sessionToken()));</span>
+<span class="nc" id="L116">    } catch (BaseException e) {</span>
+<span class="nc" id="L117">      return DefaultCredentialsProvider.create();</span>
+    }
+  }
+
+  private CredentialContext getCredentialContextFromTableLocation(URI tableLocationUri) {
+    // FIXME!! privileges are defaulted to READ only here for now as Iceberg REST impl doesn't
+    // support write
+<span class="nc" id="L124">    return CredentialContext.create(tableLocationUri,</span>
+<span class="nc" id="L125">        Set.of(CredentialContext.Privilege.SELECT));</span>
+  }
+}
+
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.7.202105040129</span></div></body></html>
