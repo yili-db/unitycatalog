@@ -1,0 +1,178 @@
+<?xml version="1.0" encoding="utf-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>VolumeService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=2;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Jacoco Coverage Report</a> &gt; <a href="index.source.html" class="el_package">io.unitycatalog.server.service</a> &gt; <span class="el_source">VolumeService.java</span></div><h1>VolumeService.java</h1><pre class="source lang-java linenums">package io.unitycatalog.server.service;
+
+import static io.unitycatalog.server.model.SecurableType.CATALOG;
+import static io.unitycatalog.server.model.SecurableType.METASTORE;
+import static io.unitycatalog.server.model.SecurableType.SCHEMA;
+import static io.unitycatalog.server.model.SecurableType.VOLUME;
+
+import io.unitycatalog.server.auth.UnityCatalogAuthorizer;
+import io.unitycatalog.server.auth.annotation.AuthorizeExpression;
+import io.unitycatalog.server.auth.annotation.AuthorizeKey;
+import io.unitycatalog.server.auth.annotation.AuthorizeKeys;
+import io.unitycatalog.server.auth.decorator.UnityAccessEvaluator;
+import io.unitycatalog.server.exception.GlobalExceptionHandler;
+import io.unitycatalog.server.model.CatalogInfo;
+import io.unitycatalog.server.model.CreateVolumeRequestContent;
+import io.unitycatalog.server.model.ListVolumesResponseContent;
+import io.unitycatalog.server.model.SchemaInfo;
+import io.unitycatalog.server.model.UpdateVolumeRequestContent;
+import io.unitycatalog.server.model.VolumeInfo;
+import io.unitycatalog.server.persist.CatalogRepository;
+import io.unitycatalog.server.persist.MetastoreRepository;
+import io.unitycatalog.server.persist.Repositories;
+import io.unitycatalog.server.persist.SchemaRepository;
+import io.unitycatalog.server.persist.VolumeRepository;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
+import com.linecorp.armeria.common.HttpResponse;
+import com.linecorp.armeria.common.HttpStatus;
+import com.linecorp.armeria.server.annotation.Delete;
+import com.linecorp.armeria.server.annotation.ExceptionHandler;
+import com.linecorp.armeria.server.annotation.Get;
+import com.linecorp.armeria.server.annotation.Param;
+import com.linecorp.armeria.server.annotation.Patch;
+import com.linecorp.armeria.server.annotation.Post;
+import lombok.SneakyThrows;
+
+@ExceptionHandler(GlobalExceptionHandler.class)
+public class VolumeService extends AuthorizedService {
+  private final VolumeRepository volumeRepository;
+  private final SchemaRepository schemaRepository;
+  private final CatalogRepository catalogRepository;
+  private final MetastoreRepository metastoreRepository;
+
+  private final UnityAccessEvaluator evaluator;
+
+<span class="pc" id="L48">  @SneakyThrows</span>
+  public VolumeService(UnityCatalogAuthorizer authorizer, Repositories repositories) {
+<span class="fc" id="L50">    super(authorizer, repositories.getUserRepository());</span>
+<span class="fc" id="L51">    this.volumeRepository = repositories.getVolumeRepository();</span>
+<span class="fc" id="L52">    this.schemaRepository = repositories.getSchemaRepository();</span>
+<span class="fc" id="L53">    this.catalogRepository = repositories.getCatalogRepository();</span>
+<span class="fc" id="L54">    this.metastoreRepository = repositories.getMetastoreRepository();</span>
+<span class="fc" id="L55">    this.evaluator = new UnityAccessEvaluator(authorizer);</span>
+<span class="fc" id="L56">  }</span>
+
+  @Post(&quot;&quot;)
+  // TODO: for now, we are not supporting CREATE VOLUME or CREATE EXTERNAL VOLUME privileges
+  @AuthorizeExpression(&quot;&quot;&quot;
+      #authorizeAny(#principal, #catalog, OWNER, USE_CATALOG) &amp;&amp;
+          #authorizeAny(#principal, #schema, OWNER, USE_SCHEMA)
+      &quot;&quot;&quot;)
+  @AuthorizeKey(METASTORE)
+  public HttpResponse createVolume(
+      @AuthorizeKeys({
+        @AuthorizeKey(value = SCHEMA, key = &quot;schema_name&quot;),
+        @AuthorizeKey(value = CATALOG, key = &quot;catalog_name&quot;)
+      })
+      CreateVolumeRequestContent createVolumeRequest) {
+    // Throw error if catalog/schema does not exist
+<span class="fc" id="L72">    VolumeInfo volumeInfo = volumeRepository.createVolume(createVolumeRequest);</span>
+
+<span class="fc" id="L74">    SchemaInfo schemaInfo =</span>
+<span class="fc" id="L75">        schemaRepository.getSchema(volumeInfo.getCatalogName() + &quot;.&quot; + volumeInfo.getSchemaName());</span>
+<span class="fc" id="L76">    initializeHierarchicalAuthorization(volumeInfo.getVolumeId(), schemaInfo.getSchemaId());</span>
+
+<span class="fc" id="L78">    return HttpResponse.ofJson(volumeInfo);</span>
+  }
+
+  @Get(&quot;&quot;)
+  @AuthorizeExpression(&quot;#defer&quot;)
+  public HttpResponse listVolumes(
+      @Param(&quot;catalog_name&quot;) String catalogName,
+      @Param(&quot;schema_name&quot;) String schemaName,
+      @Param(&quot;max_results&quot;) Optional&lt;Integer&gt; maxResults,
+      @Param(&quot;page_token&quot;) Optional&lt;String&gt; pageToken,
+      @Param(&quot;include_browse&quot;) Optional&lt;Boolean&gt; includeBrowse) {
+<span class="fc" id="L89">    ListVolumesResponseContent listVolumesResponse = volumeRepository.listVolumes(</span>
+        catalogName, schemaName, maxResults, pageToken, includeBrowse);
+
+<span class="fc" id="L92">    filterVolumes(&quot;&quot;&quot;</span>
+        #authorize(#principal, #metastore, OWNER) ||
+        #authorize(#principal, #catalog, OWNER) ||
+        (#authorize(#principal, #schema, OWNER) &amp;&amp; #authorize(#principal, #catalog, USE_CATALOG)) ||
+        (#authorize(#principal, #schema, USE_SCHEMA) &amp;&amp;
+            #authorize(#principal, #catalog, USE_CATALOG) &amp;&amp;
+            #authorizeAny(#principal, #volume, OWNER, READ_VOLUME))
+<span class="fc" id="L99">        &quot;&quot;&quot;, listVolumesResponse.getVolumes());</span>
+
+<span class="fc" id="L101">    return HttpResponse.ofJson(listVolumesResponse);</span>
+  }
+
+  @Get(&quot;/{full_name}&quot;)
+  @AuthorizeExpression(&quot;&quot;&quot;
+      #authorize(#principal, #metastore, OWNER) ||
+      #authorize(#principal, #catalog, OWNER) ||
+      (#authorize(#principal, #schema, OWNER) &amp;&amp; #authorize(#principal, #catalog, USE_CATALOG)) ||
+      (#authorize(#principal, #schema, USE_SCHEMA) &amp;&amp;
+          #authorize(#principal, #catalog, USE_CATALOG) &amp;&amp;
+          #authorizeAny(#principal, #volume, OWNER, READ_VOLUME))
+      &quot;&quot;&quot;)
+  @AuthorizeKey(METASTORE)
+  public HttpResponse getVolume(
+      @Param(&quot;full_name&quot;) @AuthorizeKey(VOLUME) String fullName,
+      @Param(&quot;include_browse&quot;) Optional&lt;Boolean&gt; includeBrowse) {
+<span class="fc" id="L117">    return HttpResponse.ofJson(volumeRepository.getVolume(fullName));</span>
+  }
+
+  @Patch(&quot;/{full_name}&quot;)
+  @AuthorizeExpression(&quot;&quot;&quot;
+      (#authorize(#principal, #volume, OWNER) &amp;&amp;
+          #authorizeAny(#principal, #catalog, OWNER, USE_CATALOG) &amp;&amp;
+          #authorizeAny(#principal, #schema, OWNER, USE_SCHEMA))
+      &quot;&quot;&quot;)
+  @AuthorizeKey(METASTORE)
+  public HttpResponse updateVolume(
+      @Param(&quot;full_name&quot;) @AuthorizeKey(VOLUME) String fullName,
+      UpdateVolumeRequestContent updateVolumeRequest) {
+<span class="fc" id="L130">    return HttpResponse.ofJson(volumeRepository.updateVolume(fullName, updateVolumeRequest));</span>
+  }
+
+  @Delete(&quot;/{full_name}&quot;)
+  @AuthorizeExpression(&quot;&quot;&quot;
+      #authorize(#principal, #catalog, OWNER) ||
+      (#authorize(#principal, #schema, OWNER) &amp;&amp; #authorize(#principal, #catalog, USE_CATALOG)) ||
+      (#authorize(#principal, #volume, OWNER) &amp;&amp;
+          #authorize(#principal, #catalog, USE_CATALOG) &amp;&amp;
+          #authorize(#principal, #schema, USE_SCHEMA))
+      &quot;&quot;&quot;)
+  @AuthorizeKey(METASTORE)
+  public HttpResponse deleteVolume(@Param(&quot;full_name&quot;) @AuthorizeKey(VOLUME) String fullName) {
+<span class="fc" id="L143">    VolumeInfo volumeInfo = volumeRepository.getVolume(fullName);</span>
+<span class="fc" id="L144">    volumeRepository.deleteVolume(fullName);</span>
+
+<span class="fc" id="L146">    SchemaInfo schemaInfo =</span>
+<span class="fc" id="L147">        schemaRepository.getSchema(volumeInfo.getCatalogName() + &quot;.&quot; + volumeInfo.getSchemaName());</span>
+<span class="fc" id="L148">    removeHierarchicalAuthorizations(volumeInfo.getVolumeId(), schemaInfo.getSchemaId());</span>
+
+<span class="fc" id="L150">    return HttpResponse.of(HttpStatus.OK);</span>
+  }
+
+  public void filterVolumes(String expression, List&lt;VolumeInfo&gt; entries) {
+    // TODO: would be nice to move this to filtering in the Decorator response
+<span class="fc" id="L155">    UUID principalId = userRepository.findPrincipalId();</span>
+
+<span class="fc" id="L157">    evaluator.filter(</span>
+        principalId,
+        expression,
+        entries,
+        vi -&gt; {
+          CatalogInfo catalogInfo = catalogRepository.getCatalog(vi.getCatalogName());
+          SchemaInfo schemaInfo =
+              schemaRepository.getSchema(vi.getCatalogName() + &quot;.&quot; + vi.getSchemaName());
+          return Map.of(
+              METASTORE,
+              metastoreRepository.getMetastoreId(),
+              CATALOG,
+              UUID.fromString(catalogInfo.getId()),
+              SCHEMA,
+              UUID.fromString(schemaInfo.getSchemaId()),
+              VOLUME,
+              UUID.fromString(vi.getVolumeId()));
+        });
+<span class="fc" id="L175">  }</span>
+}
+
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.7.202105040129</span></div></body></html>

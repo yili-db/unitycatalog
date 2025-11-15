@@ -1,0 +1,922 @@
+<?xml version="1.0" encoding="utf-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DeltaCommitRepository.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=2;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Jacoco Coverage Report</a> &gt; <a href="index.source.html" class="el_package">io.unitycatalog.server.persist</a> &gt; <span class="el_source">DeltaCommitRepository.java</span></div><h1>DeltaCommitRepository.java</h1><pre class="source lang-java linenums">package io.unitycatalog.server.persist;
+
+import io.unitycatalog.server.exception.BaseException;
+import io.unitycatalog.server.exception.ErrorCode;
+import io.unitycatalog.server.model.ColumnInfos;
+import io.unitycatalog.server.model.DataSourceFormat;
+import io.unitycatalog.server.model.DeltaCommit;
+import io.unitycatalog.server.model.DeltaCommitInfo;
+import io.unitycatalog.server.model.DeltaCommitMetadataProperties;
+import io.unitycatalog.server.model.DeltaGetCommits;
+import io.unitycatalog.server.model.DeltaGetCommitsResponse;
+import io.unitycatalog.server.model.DeltaMetadata;
+import io.unitycatalog.server.model.TableType;
+import io.unitycatalog.server.persist.dao.ColumnInfoDAO;
+import io.unitycatalog.server.persist.dao.DeltaCommitDAO;
+import io.unitycatalog.server.persist.dao.PropertyDAO;
+import io.unitycatalog.server.persist.dao.TableInfoDAO;
+import io.unitycatalog.server.persist.utils.FileOperations;
+import io.unitycatalog.server.persist.utils.TransactionManager;
+import io.unitycatalog.server.utils.Constants;
+import io.unitycatalog.server.utils.IdentityUtils;
+import io.unitycatalog.server.utils.ServerProperties;
+import io.unitycatalog.server.utils.ValidationUtils;
+import java.util.Comparator;
+import java.util.Date;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.UUID;
+import java.util.stream.Collectors;
+import org.hibernate.Session;
+import org.hibernate.SessionFactory;
+import org.hibernate.query.NativeQuery;
+import org.hibernate.query.Query;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * Repository for managing Delta commits for managed Delta tables in Unity Catalog.
+ *
+ * &lt;p&gt;The database table 'uc_delta_commits' has commits of all managed tables until the commits are
+ * backfilled. However, there's a special case that in order to record the last commit even after
+ * it's backfilled, UC does not delete the last commit but instead only mark it as
+ * is_backfilled_latest_commit=true. So it's guaranteed that there would be at least one record (the
+ * last commit) once the table is onboarded.
+ *
+ * &lt;p&gt;For example, consider the following sequence of commit operations:
+ *
+ * &lt;ol&gt;
+ *   &lt;li&gt;commit(v1). Then database has [v1]
+ *   &lt;li&gt;commit(v2). Then database has [v1, v2]
+ *   &lt;li&gt;commit(v3). Then database has [v1, v2, v3]
+ *   &lt;li&gt;backfill(v1). Then database has [v2, v3]. Any version &lt;= v1 is removed.
+ *   &lt;li&gt;commit(v4) &amp; backfill(v3). Then database has [v4]. Any version &lt;= v3 is removed.
+ *   &lt;li&gt;commit (v5). Then database has [v4, v5]
+ *   &lt;li&gt;backfill(v5). Then database has [v5(is_backfilled_latest_commit=true)]. v4 is removed. But
+ *       v5 has to be kept as the last record in database.
+ *   &lt;li&gt;commit(v6). Then database has [v5(is_backfilled_latest_commit=true), v6]
+ * &lt;/ol&gt;
+ */
+<span class="pc bpc" id="L62" title="1 of 2 branches missed.">public class DeltaCommitRepository {</span>
+
+<span class="fc" id="L64">  private static final Logger LOGGER = LoggerFactory.getLogger(DeltaCommitRepository.class);</span>
+
+  /**
+   * The maximum number of unbackfilled commits allowed per table before backfilling is required. In
+   * real life unbackfilled commits per table should remain 1 or 2 almost all the time as the client
+   * should implement proactive backfilling right after committing a version. This limit exist as a
+   * safety measure just in case there's a problem in client implementation, or the table is being
+   * committed heavily by different clients in rare cases. TODO: turn this into a configurable
+   * server property.
+   */
+  private static final int MAX_NUM_COMMITS_PER_TABLE = 10;
+
+  /**
+   * The batch size limit for commit delete and select operations. This limit is set to be larger
+   * than MAX_NUM_COMMITS_PER_TABLE so that it should never hit this limit at all. But it serves the
+   * purpose of another safety measure to avoid a huge query execution IF both the server and client
+   * are not implemented correct and commits per table grow unbounded. TODO: turn this into a
+   * configurable server property.
+   */
+  private static final int NUM_COMMITS_PER_BATCH = 20;
+
+  private final SessionFactory sessionFactory;
+  private final ServerProperties serverProperties;
+
+<span class="fc" id="L88">  public DeltaCommitRepository(SessionFactory sessionFactory, ServerProperties serverProperties) {</span>
+<span class="fc" id="L89">    this.sessionFactory = sessionFactory;</span>
+<span class="fc" id="L90">    this.serverProperties = serverProperties;</span>
+<span class="fc" id="L91">  }</span>
+
+  /**
+   * Retrieves all commits for a table in descending order by version up to NUM_COMMITS_PER_BATCH.
+   */
+  private List&lt;DeltaCommitDAO&gt; getAllCommitDAOsDesc(UUID tableId) {
+<span class="fc" id="L97">    return TransactionManager.executeWithTransaction(</span>
+        sessionFactory,
+        session -&gt; {
+          TableInfoDAO tableInfoDAO = session.get(TableInfoDAO.class, tableId);
+          if (tableInfoDAO == null) {
+            throw new BaseException(ErrorCode.NOT_FOUND, &quot;Table not found: &quot; + tableId);
+          }
+          validateTable(tableInfoDAO);
+
+          Query&lt;DeltaCommitDAO&gt; query =
+              session.createQuery(
+                  &quot;FROM DeltaCommitDAO WHERE tableId = :tableId ORDER BY commitVersion DESC&quot;,
+                  DeltaCommitDAO.class);
+          query.setParameter(&quot;tableId&quot;, tableId);
+          query.setMaxResults(NUM_COMMITS_PER_BATCH);
+          return query.list();
+        },
+        &quot;Failed to get latest commits&quot;,
+        /* readOnly= */ true);
+  }
+
+  /**
+   * Retrieves commits for a managed Delta table within a specified version range.
+   *
+   * &lt;p&gt;This method returns commits that fall within the requested version range [startVersion,
+   * endVersion]. The response includes both the list of commits and the latest table version.
+   *
+   * &lt;p&gt;&lt;b&gt;Pagination:&lt;/b&gt; Results may be further reduced to MAX_NUM_COMMITS_PER_TABLE commits per
+   * request if they exceed. Earlier (lower version) commits in the version range of [startVersion,
+   * endVersion] will be kept and later (higher version) commits in the version range will be
+   * trimmed in order to keep the result within the limit.
+   *
+   * &lt;p&gt;&lt;b&gt;Backfilled commits:&lt;/b&gt; When commits are backfilled (persisted to file storage), they are
+   * removed from the database. If the latest commit is marked as backfilled, this method returns an
+   * empty commit list but still returns the correct latestTableVersion.
+   *
+   * &lt;p&gt;&lt;b&gt;Empty table behavior:&lt;/b&gt; If the table has no commits yet, returns latestTableVersion=-1
+   * with an empty commit list.
+   *
+   * &lt;p&gt;The returned commits are ordered by version in descending order (newest first).
+   */
+  public DeltaGetCommitsResponse getCommits(DeltaGetCommits rpc) {
+<span class="fc" id="L139">    serverProperties.checkManagedTableEnabled();</span>
+
+<span class="fc bfc" id="L141" title="All 2 branches covered.">    ValidationUtils.checkArgument(rpc.getTableId() != null, &quot;Field can not be null: table_id&quot;);</span>
+<span class="fc" id="L142">    ValidationUtils.checkArgument(</span>
+<span class="fc bfc" id="L143" title="All 2 branches covered.">        rpc.getStartVersion() != null, &quot;Field can not be null: start_version&quot;);</span>
+<span class="fc" id="L144">    UUID tableId = UUID.fromString(rpc.getTableId());</span>
+<span class="fc" id="L145">    long startVersion = rpc.getStartVersion();</span>
+<span class="fc" id="L146">    Optional&lt;Long&gt; endVersion = Optional.ofNullable(rpc.getEndVersion());</span>
+<span class="fc bfc" id="L147" title="All 2 branches covered.">    ValidationUtils.checkArgument(startVersion &gt;= 0, &quot;Field must be &gt;=0: start_version&quot;);</span>
+<span class="fc" id="L148">    ValidationUtils.checkArgument(</span>
+<span class="fc" id="L149">        endVersion.filter(x -&gt; x &lt; startVersion).isEmpty(),</span>
+        &quot;end_version must be &gt;=start_version if set&quot;);
+
+<span class="fc" id="L152">    List&lt;DeltaCommitDAO&gt; allCommitDAOsDesc = getAllCommitDAOsDesc(tableId);</span>
+<span class="fc" id="L153">    int commitCount = allCommitDAOsDesc.size();</span>
+<span class="pc bpc" id="L154" title="1 of 2 branches missed.">    if (commitCount &gt; MAX_NUM_COMMITS_PER_TABLE) {</span>
+      // This should never occur. But this is recoverable and not fatal.
+<span class="nc" id="L156">      LOGGER.error(</span>
+          &quot;Table {} has {} commits, which exceeds the limit of {}.&quot;,
+          tableId,
+<span class="nc" id="L159">          commitCount,</span>
+<span class="nc" id="L160">          MAX_NUM_COMMITS_PER_TABLE);</span>
+    }
+<span class="fc bfc" id="L162" title="All 2 branches covered.">    if (commitCount == 0) {</span>
+      // No commit exist yet. Not even any backfilled one. That means the table has never sent any
+      // commit coordinated by UC.
+<span class="fc" id="L165">      return new DeltaGetCommitsResponse().latestTableVersion(-1L);</span>
+    }
+
+    // In case there's only one commit in database, firstCommitDAO and lastCommitDAO will be the
+    // same object.
+<span class="fc" id="L170">    DeltaCommitDAO firstCommitDAO = allCommitDAOsDesc.get(allCommitDAOsDesc.size() - 1);</span>
+<span class="fc" id="L171">    DeltaCommitDAO lastCommitDAO = allCommitDAOsDesc.get(0);</span>
+<span class="pc bpc" id="L172" title="2 of 4 branches missed.">    assert firstCommitDAO.getCommitVersion() &lt;= lastCommitDAO.getCommitVersion();</span>
+<span class="fc bfc" id="L173" title="All 2 branches covered.">    if (lastCommitDAO.isBackfilledLatestCommit()) {</span>
+      // The last commit is already backfilled. Just return an empty list. No need to return any
+      // actual commits.
+<span class="fc" id="L176">      return new DeltaGetCommitsResponse().latestTableVersion(lastCommitDAO.getCommitVersion());</span>
+    }
+
+    // The last version to return if endVersion is not set. It's limited by pagination limit.
+    // In normal cases the pagination limitation should not happen at all since the limit is the
+    // same limit that a table can have as many unbackfilled commits as possible. But it is
+    // implemented this way just in case.
+<span class="fc" id="L183">    long paginatedEndVersionInclusive =</span>
+<span class="fc" id="L184">        Math.max(startVersion, firstCommitDAO.getCommitVersion()) + MAX_NUM_COMMITS_PER_TABLE - 1;</span>
+    // The actual last version to return
+<span class="fc" id="L186">    long effectiveEndVersionInclusive =</span>
+<span class="fc" id="L187">        Math.min(endVersion.orElse(Long.MAX_VALUE), paginatedEndVersionInclusive);</span>
+
+    // Filter result and return
+<span class="fc" id="L190">    List&lt;DeltaCommitInfo&gt; commits =</span>
+<span class="fc" id="L191">        allCommitDAOsDesc.stream()</span>
+<span class="fc" id="L192">            .filter(</span>
+                c -&gt;
+                    !c.isBackfilledLatestCommit()
+                        &amp;&amp; c.getCommitVersion() &gt;= startVersion
+                        &amp;&amp; c.getCommitVersion() &lt;= effectiveEndVersionInclusive)
+<span class="fc" id="L197">            .map(DeltaCommitDAO::toCommitInfo)</span>
+<span class="fc" id="L198">            .collect(Collectors.toList());</span>
+<span class="fc" id="L199">    return new DeltaGetCommitsResponse()</span>
+<span class="fc" id="L200">        .commits(commits)</span>
+<span class="fc" id="L201">        .latestTableVersion(lastCommitDAO.getCommitVersion());</span>
+  }
+
+  /**
+   * Commits a new version to a managed Delta table with coordinated commit semantics.
+   *
+   * &lt;p&gt;This method handles three types of commit operations:
+   *
+   * &lt;ul&gt;
+   *   &lt;li&gt;&lt;b&gt;Onboarding commit:&lt;/b&gt; The first commit sent to Unity Catalog for this table
+   *   &lt;li&gt;&lt;b&gt;Normal commit:&lt;/b&gt; A new version commit with optional backfill notification
+   *   &lt;li&gt;&lt;b&gt;Backfill-only commit:&lt;/b&gt; No new version, only reports backfilled versions
+   * &lt;/ul&gt;
+   *
+   * &lt;p&gt;The method validates the commit, ensures the table is a managed Delta table, and performs
+   * the appropriate commit operation within a transaction.
+   *
+   * @param commit the commit request containing version info, metadata, and backfill information
+   * @throws BaseException if the commit is invalid, table is not found, or commit limits are
+   *     exceeded
+   */
+  public void postCommit(DeltaCommit commit) {
+<span class="fc" id="L223">    serverProperties.checkManagedTableEnabled();</span>
+<span class="fc" id="L224">    validateCommit(commit);</span>
+<span class="fc" id="L225">    TransactionManager.executeWithTransaction(</span>
+        sessionFactory,
+        session -&gt; {
+          UUID tableId = UUID.fromString(commit.getTableId());
+          TableInfoDAO tableInfoDAO = session.get(TableInfoDAO.class, tableId);
+          if (tableInfoDAO == null) {
+            throw new BaseException(ErrorCode.NOT_FOUND, &quot;Table not found: &quot; + commit.getTableId());
+          }
+          validateTableForCommit(commit, tableInfoDAO);
+          List&lt;DeltaCommitDAO&gt; firstAndLastCommits = getFirstAndLastCommits(session, tableId);
+          if (firstAndLastCommits.isEmpty()) {
+            handleOnboardingCommit(session, tableId, tableInfoDAO, commit);
+          } else {
+            DeltaCommitDAO firstCommitDAO = firstAndLastCommits.get(0);
+            DeltaCommitDAO lastCommitDAO = firstAndLastCommits.get(1);
+            assert firstCommitDAO.getCommitVersion() &lt;= lastCommitDAO.getCommitVersion();
+            if (commit.getCommitInfo() == null) {
+              // This is already checked in validateCommit()
+              assert commit.getLatestBackfilledVersion() != null;
+              handleBackfillOnlyCommit(
+                  session,
+                  tableId,
+                  commit.getLatestBackfilledVersion(),
+                  firstCommitDAO.getCommitVersion(),
+                  lastCommitDAO.getCommitVersion());
+            } else {
+              handleNormalCommit(
+                  session, tableId, tableInfoDAO, commit, firstCommitDAO, lastCommitDAO);
+            }
+          }
+          return null;
+        },
+<span class="fc" id="L257">        &quot;Error committing to table: &quot; + commit.getTableId(),</span>
+        /* readOnly = */ false);
+<span class="fc" id="L259">  }</span>
+
+  /**
+   * Handles an onboarding commit, which is the very first commit sent to Unity Catalog for a table.
+   *
+   * &lt;p&gt;An onboarding commit must include commit information (version, timestamp, file details) but
+   * does not perform backfilling since there are no prior Unity Catalog-managed versions. This may
+   * be the first commit since table creation, or the table may have had previous filesystem-only
+   * commits. After this commit, Unity Catalog becomes the commit coordinator for the table.
+   *
+   * &lt;p&gt;The method saves the commit and optionally updates table metadata if provided.
+   *
+   * @param session the Hibernate session for database operations
+   * @param tableId the unique identifier of the table being committed to
+   * @param tableInfoDAO the table information data access object
+   * @param commit the commit request containing version info and optional metadata
+   * @throws BaseException if the commit info is null
+   */
+  private static void handleOnboardingCommit(
+      Session session, UUID tableId, TableInfoDAO tableInfoDAO, DeltaCommit commit) {
+<span class="fc" id="L279">    DeltaCommitInfo commitInfo = commit.getCommitInfo();</span>
+<span class="fc bfc" id="L280" title="All 2 branches covered.">    ValidationUtils.checkArgument(</span>
+        commitInfo != null,
+        &quot;Field can not be null: %s in onboarding commit&quot;,
+        DeltaCommit.JSON_PROPERTY_COMMIT_INFO);
+<span class="fc" id="L284">    saveCommit(session, tableId, commitInfo);</span>
+<span class="fc" id="L285">    Optional.ofNullable(commit.getMetadata())</span>
+<span class="fc" id="L286">        .ifPresent(metadata -&gt; updateTableMetadata(session, tableId, tableInfoDAO, metadata));</span>
+<span class="fc" id="L287">  }</span>
+
+  /**
+   * Handles a commit request that only performs backfilling without adding a new commit version.
+   *
+   * &lt;p&gt;This method is called when a commit request has no commit info but specifies a backfilled
+   * version. It validates that the backfilled version is not greater than the last committed
+   * version, then delegates to the backfill logic to remove old commits from the repository.
+   *
+   * @param session the Hibernate session for database operations
+   * @param tableId the unique identifier of the table
+   * @param latestBackfilledVersion the version up to which backfilling has already been performed
+   * @param firstCommitVersion the version number of the first commit currently in the database
+   * @param lastCommitVersion the version number of the last commit currently in the database
+   * @throws BaseException if the backfilled version is greater than the last commit version
+   */
+  private static void handleBackfillOnlyCommit(
+      Session session,
+      UUID tableId,
+      long latestBackfilledVersion,
+      long firstCommitVersion,
+      long lastCommitVersion) {
+<span class="fc bfc" id="L309" title="All 2 branches covered.">    if (latestBackfilledVersion &gt; lastCommitVersion) {</span>
+<span class="fc" id="L310">      throw new BaseException(</span>
+          ErrorCode.INVALID_ARGUMENT,
+<span class="fc" id="L312">          String.format(</span>
+              &quot;Should not backfill version %d while the last version committed is %d&quot;,
+<span class="fc" id="L314">              latestBackfilledVersion, lastCommitVersion));</span>
+    }
+<span class="fc" id="L316">    backfillCommits(</span>
+        session,
+        tableId,
+        latestBackfilledVersion,
+        firstCommitVersion,
+        lastCommitVersion,
+<span class="fc" id="L322">        Optional.empty());</span>
+<span class="fc" id="L323">  }</span>
+
+  /**
+   * Handles a normal commit operation that adds a new version to the table.
+   *
+   * &lt;p&gt;A normal commit is any commit after the initial onboarding commit. It must include commit
+   * info and may optionally:
+   *
+   * &lt;ul&gt;
+   *   &lt;li&gt;Report backfilled versions to trigger cleanup of old commits
+   *   &lt;li&gt;Update table metadata (schema, properties, description)
+   * &lt;/ul&gt;
+   *
+   * &lt;p&gt;The method validates that:
+   *
+   * &lt;ul&gt;
+   *   &lt;li&gt;The new version is greater than the current version
+   *   &lt;li&gt;The new version is exactly the next version (no gaps)
+   *   &lt;li&gt;The backfilled version (if provided) is valid
+   *   &lt;li&gt;Adding the new commit won't exceed the maximum commits per table limit
+   * &lt;/ul&gt;
+   *
+   * @param session the Hibernate session for database operations
+   * @param tableId the unique identifier of the table
+   * @param tableInfoDAO the table information data access object
+   * @param commit the commit request containing version info, optional backfill, and metadata
+   * @param firstCommitDAO the first commit already in the database
+   * @param lastCommitDAO the last commit already in the database
+   * @throws BaseException if the commit version is invalid, already exists, or violates constraints
+   */
+  private static void handleNormalCommit(
+      Session session,
+      UUID tableId,
+      TableInfoDAO tableInfoDAO,
+      DeltaCommit commit,
+      DeltaCommitDAO firstCommitDAO,
+      DeltaCommitDAO lastCommitDAO) {
+<span class="fc" id="L360">    DeltaCommitInfo commitInfo = Objects.requireNonNull(commit.getCommitInfo());</span>
+<span class="fc" id="L361">    long firstCommitVersion = firstCommitDAO.getCommitVersion();</span>
+<span class="fc" id="L362">    long lastCommitVersion = lastCommitDAO.getCommitVersion();</span>
+<span class="fc" id="L363">    long newCommitVersion = commitInfo.getVersion();</span>
+<span class="fc bfc" id="L364" title="All 2 branches covered.">    if (newCommitVersion &lt;= lastCommitVersion) {</span>
+<span class="fc" id="L365">      throw new BaseException(</span>
+          ErrorCode.ALREADY_EXISTS,
+          &quot;Commit version already accepted. Current table version is &quot; + lastCommitVersion);
+    }
+<span class="fc bfc" id="L369" title="All 2 branches covered.">    if (newCommitVersion &gt; lastCommitVersion + 1) {</span>
+<span class="fc" id="L370">      throw new BaseException(</span>
+          ErrorCode.INVALID_ARGUMENT,
+<span class="fc" id="L372">          String.format(</span>
+              &quot;Commit version must be the next version after the latest commit %d, but got %d&quot;,
+<span class="fc" id="L374">              lastCommitVersion, newCommitVersion));</span>
+    }
+    // getLatestBackfilledVersion may or may not be null because normal commit may or may
+    // not notify a backfill in the same request
+<span class="fc" id="L378">    Optional&lt;Long&gt; latestBackfilledVersion =</span>
+<span class="fc" id="L379">        Optional.ofNullable(commit.getLatestBackfilledVersion());</span>
+<span class="fc bfc" id="L380" title="All 2 branches covered.">    if (latestBackfilledVersion.filter(x -&gt; x &gt; lastCommitVersion).isPresent()) {</span>
+<span class="fc" id="L381">      throw new BaseException(</span>
+          ErrorCode.INVALID_ARGUMENT,
+<span class="fc" id="L383">          String.format(</span>
+              &quot;Latest backfilled version %d cannot be greater than the last commit version = %d&quot;,
+<span class="fc" id="L385">              latestBackfilledVersion.get(), lastCommitVersion));</span>
+    }
+<span class="fc" id="L387">    checkCommitLimit(</span>
+        tableId, newCommitVersion, latestBackfilledVersion, firstCommitDAO, lastCommitDAO);
+<span class="fc" id="L389">    saveCommit(session, tableId, commitInfo);</span>
+<span class="fc" id="L390">    Optional.ofNullable(commit.getMetadata())</span>
+<span class="fc" id="L391">        .ifPresent(metadata -&gt; updateTableMetadata(session, tableId, tableInfoDAO, metadata));</span>
+<span class="fc" id="L392">    latestBackfilledVersion.ifPresent(</span>
+        latestBackfilled -&gt;
+            backfillCommits(
+                session,
+                tableId,
+                latestBackfilled,
+                firstCommitVersion,
+                lastCommitVersion,
+                Optional.of(newCommitVersion)));
+<span class="fc" id="L401">  }</span>
+
+  /**
+   * Calculates the would-be backfilled version AFTER the current commit request is completed. This
+   * considers the current state of commits and any backfill information in the request.
+   *
+   * &lt;p&gt;The logic handles several cases:
+   *
+   * &lt;ul&gt;
+   *   &lt;li&gt;If the last commit is already marked as backfilled, it remains the backfilled version
+   *   &lt;li&gt;If the request specifies a valid backfilled version &gt;= first commit, use that
+   *   &lt;li&gt;If the first commit is marked as backfilled, use its version
+   *   &lt;li&gt;Otherwise, nothing is backfilled yet (returns firstCommitVersion - 1)
+   * &lt;/ul&gt;
+   *
+   * @param tableId the unique identifier of the table (used for logging)
+   * @param latestBackfilledVersion optional backfilled version specified in the commit request
+   * @param firstCommitDAO the first commit currently in the database with the lowest version
+   * @param lastCommitDAO the last commit currently in the database with the highest version
+   * @return the effective backfilled version after the commit operation completes
+   */
+  private static long getEffectiveBackfilledVersion(
+      UUID tableId,
+      Optional&lt;Long&gt; latestBackfilledVersion,
+      DeltaCommitDAO firstCommitDAO,
+      DeltaCommitDAO lastCommitDAO) {
+<span class="fc bfc" id="L427" title="All 2 branches covered.">    if (lastCommitDAO.isBackfilledLatestCommit()) {</span>
+      // There should only be ONE commit if the last one is marked as backfilled which is the
+      // special case.
+<span class="pc bpc" id="L430" title="1 of 2 branches missed.">      if (firstCommitDAO.getCommitVersion() != lastCommitDAO.getCommitVersion()) {</span>
+        // This means a bug in this implementation, but recoverable.
+<span class="nc" id="L432">        LOGGER.error(</span>
+            &quot;Table: {}. Latest commit is marked backfilled but there are {} commits.&quot;,
+            tableId,
+<span class="nc" id="L435">            lastCommitDAO.getCommitVersion() - firstCommitDAO.getCommitVersion() + 1);</span>
+      }
+      // In this case:
+      // 1. If the request wants to commit a newer version, it cannot possibly backfill the same
+      // newer version in the same request. So the last backfilled version remains the same.
+      // 2. If by any means the request still wants to report backfilled version in this request,
+      // it must be &lt;= lastCommit. So it's the same result.
+<span class="fc" id="L442">      return lastCommitDAO.getCommitVersion();</span>
+<span class="fc" id="L443">    } else if (latestBackfilledVersion</span>
+<span class="fc" id="L444">        .filter(x -&gt; x &gt;= firstCommitDAO.getCommitVersion())</span>
+<span class="fc bfc" id="L445" title="All 2 branches covered.">        .isPresent()) {</span>
+      // The commit request reports a valid backfilled version. We'll take that.
+<span class="fc" id="L447">      return latestBackfilledVersion.get();</span>
+<span class="fc bfc" id="L448" title="All 2 branches covered.">    } else if (firstCommitDAO.isBackfilledLatestCommit()) {</span>
+      // The firstCommit is already backfilled. It remains only because it was the only commit
+      // left when being backfilled.
+<span class="fc" id="L451">      return firstCommitDAO.getCommitVersion();</span>
+    } else {
+      // Otherwise, nothing in [first, last] is/will be backfilled.
+<span class="fc" id="L454">      return firstCommitDAO.getCommitVersion() - 1L;</span>
+    }
+  }
+
+  /**
+   * Validates that adding the new commit will not exceed the maximum number of commits allowed per
+   * table after the commit (and backfill if any) is finished.
+   *
+   * @param tableId the unique identifier of the table
+   * @param newCommitVersion the version number of the new commit being added
+   * @param latestBackfilledVersion optional backfilled version specified in the commit request
+   * @param firstCommitDAO the first commit currently in the database with the lowest version
+   * @param lastCommitDAO the last commit currently in the database with the highest version
+   * @throws BaseException if the commit would exceed the maximum commits per table limit
+   */
+  private static void checkCommitLimit(
+      UUID tableId,
+      long newCommitVersion,
+      Optional&lt;Long&gt; latestBackfilledVersion,
+      DeltaCommitDAO firstCommitDAO,
+      DeltaCommitDAO lastCommitDAO) {
+<span class="fc" id="L475">    long effectiveBackfilledVersion =</span>
+<span class="fc" id="L476">        getEffectiveBackfilledVersion(</span>
+            tableId, latestBackfilledVersion, firstCommitDAO, lastCommitDAO);
+<span class="fc" id="L478">    long expectedFirstCommitVersionAfterBackfill = effectiveBackfilledVersion + 1L;</span>
+<span class="fc" id="L479">    long expectedCommitCountPostCommit =</span>
+        newCommitVersion - expectedFirstCommitVersionAfterBackfill + 1L;
+<span class="fc bfc" id="L481" title="All 2 branches covered.">    if (expectedCommitCountPostCommit &gt; MAX_NUM_COMMITS_PER_TABLE) {</span>
+<span class="fc" id="L482">      throw new BaseException(</span>
+          ErrorCode.RESOURCE_EXHAUSTED, &quot;Max number of commits per table reached: &quot; + tableId);
+    }
+<span class="fc" id="L485">  }</span>
+
+  /**
+   * Performs the backfilling operation by deleting old commits up to the specified version. The
+   * most recent commit is always preserved as it serves as an indicator of the current table
+   * version.
+   *
+   * &lt;p&gt;For backfill-only requests (when newCommitVersion is empty), if the backfilled version
+   * equals the last commit version, that commit is marked as backfilled rather than deleted.
+   *
+   * &lt;p&gt;This method performs deletions in batches and retries up to 5 times if not all commits are
+   * deleted, logging errors for investigation.
+   *
+   * @param session the Hibernate session for database operations
+   * @param tableId the unique identifier of the table
+   * @param latestBackfilledVersion the version up to which backfilling should be performed
+   * @param firstCommitVersion the version number of the first commit currently in the database with
+   *     the lowest version number
+   * @param lastCommitVersion the version number of the last commit currently in the database with
+   *     the highest version number
+   * @param newCommitVersion optional new commit version being added (empty for backfill-only
+   *     requests)
+   */
+  private static void backfillCommits(
+      Session session,
+      UUID tableId,
+      long latestBackfilledVersion,
+      long firstCommitVersion,
+      long lastCommitVersion,
+      Optional&lt;Long&gt; newCommitVersion) {
+    // These asserts are already validated before calling this function
+<span class="pc bpc" id="L516" title="2 of 4 branches missed.">    assert latestBackfilledVersion &lt;= lastCommitVersion;</span>
+<span class="pc bpc" id="L517" title="2 of 6 branches missed.">    assert newCommitVersion.isEmpty() || newCommitVersion.get() == lastCommitVersion + 1;</span>
+
+<span class="fc bfc" id="L519" title="All 2 branches covered.">    if (latestBackfilledVersion &lt; firstCommitVersion) {</span>
+      // Backfilling a version that is already backfilled is fine. But no-op.
+<span class="fc" id="L521">      return;</span>
+    }
+
+<span class="fc" id="L524">    long highestCommitVersion = newCommitVersion.orElse(lastCommitVersion);</span>
+    // The last commit version, be it a new one or existing one, is never deleted.
+    // It serves as an indicator of the current version.
+<span class="fc" id="L527">    long deleteUpTo = Math.min(latestBackfilledVersion, highestCommitVersion - 1L);</span>
+
+<span class="fc bfc" id="L529" title="All 4 branches covered.">    if (newCommitVersion.isEmpty() &amp;&amp; latestBackfilledVersion == lastCommitVersion) {</span>
+      // Backfill only request will never delete the last existing commit. Instead, we mark it as
+      // backfilled.
+<span class="fc" id="L532">      markCommitAsLatestBackfilled(session, tableId, lastCommitVersion);</span>
+    }
+<span class="fc" id="L534">    long numCommitsToDelete = deleteUpTo - firstCommitVersion + 1L;</span>
+<span class="fc bfc" id="L535" title="All 2 branches covered.">    if (numCommitsToDelete &lt;= 0) {</span>
+      // Nothing to delete.
+<span class="fc" id="L537">      return;</span>
+    }
+
+    // Retry backfilling 5 times to prioritize cleaning of the commit table and log bugs where there
+    // are more commits in the table than MAX_NUM_COMMITS_PER_TABLE
+<span class="fc" id="L542">    final int MAX_ITERATIONS = 5;</span>
+<span class="pc bpc" id="L543" title="1 of 4 branches missed.">    for (int i = 0; i &lt; MAX_ITERATIONS &amp;&amp; numCommitsToDelete &gt; 0; i++) {</span>
+<span class="fc" id="L544">      numCommitsToDelete -= deleteCommitsUpTo(session, tableId, deleteUpTo);</span>
+<span class="pc bpc" id="L545" title="1 of 2 branches missed.">      if (numCommitsToDelete &gt; 0) {</span>
+<span class="nc" id="L546">        LOGGER.error(</span>
+            &quot;Failed to backfill commits for tableId: {}, upTo: {}, in batch: {}, commits left: {}&quot;,
+            tableId,
+<span class="nc" id="L549">            deleteUpTo,</span>
+<span class="nc" id="L550">            i,</span>
+<span class="nc" id="L551">            numCommitsToDelete);</span>
+      }
+    }
+<span class="fc" id="L554">  }</span>
+
+  /**
+   * Persists a new commit record to the database.
+   *
+   * &lt;p&gt;Converts the commit info into a data access object and saves it to the commit repository.
+   * This record includes the version number, timestamp, and file metadata for the commit.
+   *
+   * @param session the Hibernate session for database operations
+   * @param tableId the unique identifier of the table
+   * @param commitInfo the commit information containing version, timestamp, and file details
+   */
+  private static void saveCommit(Session session, UUID tableId, DeltaCommitInfo commitInfo) {
+<span class="fc" id="L567">    DeltaCommitDAO deltaCommitDAO = DeltaCommitDAO.from(tableId, commitInfo);</span>
+<span class="fc" id="L568">    session.persist(deltaCommitDAO);</span>
+<span class="fc" id="L569">  }</span>
+
+  /**
+   * Deletes commits up to and including the specified version.
+   *
+   * &lt;p&gt;This method executes a batch delete operation limited by {@code NUM_COMMITS_PER_BATCH}. If
+   * more commits need to be deleted than the batch size, this method should be called multiple
+   * times.
+   *
+   * @param session the Hibernate session for database operations
+   * @param tableId the unique identifier of the table
+   * @param upToCommitVersion the version number up to which commits should be deleted (inclusive)
+   * @return the number of commits actually deleted in this batch
+   */
+  private static int deleteCommitsUpTo(Session session, UUID tableId, long upToCommitVersion) {
+<span class="fc" id="L584">    NativeQuery&lt;?&gt; query =</span>
+<span class="fc" id="L585">        session.createNativeQuery(</span>
+            &quot;DELETE FROM uc_delta_commits WHERE table_id = :tableId AND commit_version &lt;= :upToCommitVersion LIMIT :numCommitsPerBatch&quot;);
+<span class="fc" id="L587">    query.setParameter(&quot;tableId&quot;, tableId);</span>
+<span class="fc" id="L588">    query.setParameter(&quot;upToCommitVersion&quot;, upToCommitVersion);</span>
+<span class="fc" id="L589">    query.setParameter(&quot;numCommitsPerBatch&quot;, NUM_COMMITS_PER_BATCH);</span>
+<span class="fc" id="L590">    return query.executeUpdate();</span>
+  }
+
+  /**
+   * Deletes commits for the specified table in a single batch.
+   *
+   * &lt;p&gt;Unlike {@link #deleteCommitsUpTo(Session, UUID, long)}, this method deletes any commits for
+   * the table without version filtering. The operation is limited by {@code NUM_COMMITS_PER_BATCH}.
+   * Used primarily during table deletion to purge all commit history.
+   *
+   * @param session the Hibernate session for database operations
+   * @param tableId the unique identifier of the table
+   * @return the number of commits actually deleted in this batch
+   */
+  private static int deleteCommits(Session session, UUID tableId) {
+<span class="fc" id="L605">    NativeQuery&lt;?&gt; query =</span>
+<span class="fc" id="L606">        session.createNativeQuery(</span>
+            &quot;DELETE FROM uc_delta_commits WHERE table_id = :tableId LIMIT :numCommitsPerBatch&quot;);
+<span class="fc" id="L608">    query.setParameter(&quot;tableId&quot;, tableId);</span>
+<span class="fc" id="L609">    query.setParameter(&quot;numCommitsPerBatch&quot;, NUM_COMMITS_PER_BATCH);</span>
+<span class="fc" id="L610">    return query.executeUpdate();</span>
+  }
+
+  /**
+   * Marks a specific commit as the latest backfilled commit. This is used when a backfill-only
+   * request backfills up to and including the last existing commit, which must be preserved.
+   *
+   * @param session the Hibernate session for database operations
+   * @param tableId the unique identifier of the table
+   * @param commitVersion the version number of the commit to mark as backfilled
+   */
+  private static void markCommitAsLatestBackfilled(
+      Session session, UUID tableId, long commitVersion) {
+<span class="fc" id="L623">    NativeQuery&lt;?&gt; query =</span>
+<span class="fc" id="L624">        session.createNativeQuery(</span>
+            &quot;UPDATE uc_delta_commits SET is_backfilled_latest_commit = true WHERE table_id = :tableId &quot;
+                + &quot;AND commit_version = :commitVersion&quot;);
+<span class="fc" id="L627">    query.setParameter(&quot;tableId&quot;, tableId);</span>
+<span class="fc" id="L628">    query.setParameter(&quot;commitVersion&quot;, commitVersion);</span>
+<span class="fc" id="L629">    query.executeUpdate();</span>
+<span class="fc" id="L630">  }</span>
+
+  /**
+   * Retrieves the first and last commits in database for a table ordered by version number.
+   *
+   * &lt;p&gt;The first commit is the commit in database with the lowest version number.
+   *
+   * &lt;p&gt;The last commit is the commit in database with the highest version number.
+   *
+   * &lt;p&gt;They may or may not be marked as backfilled already. But this function never count any of
+   * the commits that are deleted by backfillCommits() since they are no longer in database.
+   *
+   * &lt;p&gt;Uses a UNION ALL query to efficiently fetch both boundary commits in a single database
+   * operation. The results are sorted to ensure consistent ordering.
+   *
+   * &lt;p&gt;Return value interpretation:
+   *
+   * &lt;ul&gt;
+   *   &lt;li&gt;Empty list: no commits exist for this table
+   *   &lt;li&gt;List with two identical commits: only one commit exists (returned twice for consistency)
+   *   &lt;li&gt;List with two different commits: [firstCommit, lastCommit] by version number
+   * &lt;/ul&gt;
+   *
+   * @param session the Hibernate session for database operations
+   * @param tableId the unique identifier of the table
+   * @return a list containing the first and last commits, empty if no commits exist
+   */
+  private List&lt;DeltaCommitDAO&gt; getFirstAndLastCommits(Session session, UUID tableId) {
+    // Use native SQL to get the first and last commits since HQL doesn't support UNION ALL.
+    // UNION ALL makes sure TWO rows are returned as long as there's any commit, even if there's
+    // only one commit in table.
+<span class="fc" id="L661">    String sql =</span>
+        &quot;(SELECT * FROM uc_delta_commits WHERE table_id = :tableId &quot;
+            + &quot;ORDER BY commit_version ASC LIMIT 1) &quot;
+            + &quot;UNION ALL &quot;
+            + &quot;(SELECT * FROM uc_delta_commits WHERE table_id = :tableId &quot;
+            + &quot;ORDER BY commit_version DESC LIMIT 1)&quot;;
+<span class="fc" id="L667">    Query&lt;DeltaCommitDAO&gt; query = session.createNativeQuery(sql, DeltaCommitDAO.class);</span>
+<span class="fc" id="L668">    query.setParameter(&quot;tableId&quot;, tableId);</span>
+<span class="fc" id="L669">    List&lt;DeltaCommitDAO&gt; result = query.getResultList();</span>
+    // Sort to ensure the first commit is at index 0
+<span class="fc" id="L671">    result.sort(Comparator.comparing(DeltaCommitDAO::getCommitVersion));</span>
+<span class="fc" id="L672">    return result;</span>
+  }
+
+  /**
+   * Updates table metadata including properties, schema (columns), and description based on the
+   * metadata provided in a commit. This method handles:
+   *
+   * &lt;ul&gt;
+   *   &lt;li&gt;Properties: Replaces all existing properties with new ones
+   *   &lt;li&gt;Schema: Replaces all existing columns with new ones
+   *   &lt;li&gt;Description: Updates the table comment
+   * &lt;/ul&gt;
+   *
+   * &lt;p&gt;The table's updated_at and updated_by fields are also refreshed.
+   *
+   * @param session the Hibernate session for database operations
+   * @param tableId the unique identifier of the table
+   * @param tableInfoDAO the table information data access object to update
+   * @param metadata the metadata containing properties, schema, and/or description updates
+   */
+  private static void updateTableMetadata(
+      Session session, UUID tableId, TableInfoDAO tableInfoDAO, DeltaMetadata metadata) {
+<span class="fc bfc" id="L694" title="All 2 branches covered.">    if (metadata.getProperties() != null) {</span>
+      // Update properties. They aren't part of TableInfoDAO so they'll do a separate update.
+<span class="fc" id="L696">      PropertyRepository.findProperties(session, tableId, Constants.TABLE).forEach(session::remove);</span>
+<span class="fc" id="L697">      session.flush();</span>
+<span class="fc" id="L698">      PropertyDAO.from(metadata.getProperties().getProperties(), tableId, Constants.TABLE)</span>
+<span class="fc" id="L699">          .forEach(session::persist);</span>
+    }
+
+<span class="fc bfc" id="L702" title="All 2 branches covered.">    if (metadata.getSchema() != null) {</span>
+      // Update columns - clear existing and add new to trigger orphan removal
+<span class="fc" id="L704">      List&lt;ColumnInfoDAO&gt; newColumns = ColumnInfoDAO.fromList(metadata.getSchema().getColumns());</span>
+<span class="fc" id="L705">      tableInfoDAO.getColumns().clear();</span>
+<span class="fc" id="L706">      session.flush(); // Flush to ensure old columns are deleted before adding new ones</span>
+<span class="fc" id="L707">      newColumns.forEach(</span>
+          c -&gt; {
+            c.setId(UUID.randomUUID());
+            c.setTable(tableInfoDAO);
+          });
+<span class="fc" id="L712">      tableInfoDAO.getColumns().addAll(newColumns);</span>
+    }
+
+<span class="fc bfc" id="L715" title="All 2 branches covered.">    if (metadata.getDescription() != null) {</span>
+      // Update comment
+<span class="fc" id="L717">      tableInfoDAO.setComment(metadata.getDescription());</span>
+    }
+
+<span class="fc" id="L720">    String callerId = IdentityUtils.findPrincipalEmailAddress();</span>
+<span class="fc" id="L721">    tableInfoDAO.setUpdatedBy(callerId);</span>
+<span class="fc" id="L722">    tableInfoDAO.setUpdatedAt(new Date());</span>
+<span class="fc" id="L723">    session.merge(tableInfoDAO);</span>
+<span class="fc" id="L724">  }</span>
+
+  /**
+   * Validates the structure and content of a commit request.
+   *
+   * &lt;p&gt;This method performs comprehensive validation including:
+   *
+   * &lt;ul&gt;
+   *   &lt;li&gt;Table ID and URI must be non-null and non-empty
+   *   &lt;li&gt;If commit info is present: validates version, timestamp, file name, file size, and file
+   *       modification timestamp are positive/non-empty
+   *   &lt;li&gt;If metadata is present: ensures at least one of description, properties, or schema is set
+   *   &lt;li&gt;If metadata properties are present: validates that ucTableId matches the commit's table
+   *       ID
+   *   &lt;li&gt;If commit info is absent: ensures this is a valid backfill-only commit with backfilled
+   *       version set
+   * &lt;/ul&gt;
+   *
+   * @param commit the commit request to validate
+   * @throws BaseException if any validation rule is violated
+   */
+  private static void validateCommit(DeltaCommit commit) {
+    // Validate the commit object
+<span class="fc" id="L747">    ValidationUtils.checkArgument(</span>
+<span class="fc bfc" id="L748" title="All 4 branches covered.">        commit.getTableId() != null &amp;&amp; !commit.getTableId().isEmpty(),</span>
+        &quot;Field can not be empty: %s&quot;,
+        DeltaCommit.JSON_PROPERTY_TABLE_ID);
+<span class="fc" id="L751">    ValidationUtils.checkArgument(</span>
+<span class="fc bfc" id="L752" title="All 4 branches covered.">        commit.getTableUri() != null &amp;&amp; !commit.getTableUri().isEmpty(),</span>
+        &quot;Field can not be empty: %s&quot;,
+        DeltaCommit.JSON_PROPERTY_TABLE_URI);
+
+    // Validate the commit info object
+<span class="fc bfc" id="L757" title="All 2 branches covered.">    if (commit.getCommitInfo() != null) {</span>
+<span class="fc" id="L758">      DeltaCommitInfo commitInfo = commit.getCommitInfo();</span>
+<span class="fc" id="L759">      ValidationUtils.checkArgument(</span>
+<span class="fc bfc" id="L760" title="All 4 branches covered.">          commitInfo.getVersion() != null &amp;&amp; commitInfo.getVersion() &gt; 0,</span>
+          &quot;Field must be positive: %s&quot;,
+          DeltaCommitInfo.JSON_PROPERTY_VERSION);
+<span class="fc" id="L763">      ValidationUtils.checkArgument(</span>
+<span class="fc bfc" id="L764" title="All 4 branches covered.">          commitInfo.getTimestamp() != null &amp;&amp; commitInfo.getTimestamp() &gt; 0,</span>
+          &quot;Field must be positive: %s&quot;,
+          DeltaCommitInfo.JSON_PROPERTY_TIMESTAMP);
+<span class="fc" id="L767">      ValidationUtils.checkArgument(</span>
+<span class="fc bfc" id="L768" title="All 4 branches covered.">          commitInfo.getFileName() != null &amp;&amp; !commitInfo.getFileName().isEmpty(),</span>
+          &quot;Field can not be empty: %s&quot;,
+          DeltaCommitInfo.JSON_PROPERTY_FILE_NAME);
+<span class="fc" id="L771">      ValidationUtils.checkArgument(</span>
+<span class="fc bfc" id="L772" title="All 4 branches covered.">          commitInfo.getFileSize() != null &amp;&amp; commitInfo.getFileSize() &gt; 0,</span>
+          &quot;Field must be positive: %s&quot;,
+          DeltaCommitInfo.JSON_PROPERTY_FILE_SIZE);
+<span class="fc" id="L775">      ValidationUtils.checkArgument(</span>
+<span class="fc bfc" id="L776" title="All 2 branches covered.">          commitInfo.getFileModificationTimestamp() != null</span>
+<span class="fc bfc" id="L777" title="All 2 branches covered.">              &amp;&amp; commitInfo.getFileModificationTimestamp() &gt; 0,</span>
+          &quot;Field must be positive: %s&quot;,
+          DeltaCommitInfo.JSON_PROPERTY_FILE_MODIFICATION_TIMESTAMP);
+<span class="fc bfc" id="L780" title="All 2 branches covered.">      if (commit.getMetadata() != null) {</span>
+<span class="fc" id="L781">        DeltaMetadata metadata = commit.getMetadata();</span>
+<span class="fc" id="L782">        Optional&lt;Map&lt;String, String&gt;&gt; propertiesOpt =</span>
+<span class="fc" id="L783">            Optional.ofNullable(metadata.getProperties())</span>
+<span class="fc" id="L784">                .map(DeltaCommitMetadataProperties::getProperties);</span>
+<span class="fc" id="L785">        boolean hasProperties = propertiesOpt.map(p -&gt; !p.isEmpty()).orElse(false);</span>
+<span class="fc" id="L786">        boolean hasSchema =</span>
+<span class="fc" id="L787">            Optional.ofNullable(metadata.getSchema())</span>
+<span class="fc" id="L788">                .map(ColumnInfos::getColumns)</span>
+<span class="fc" id="L789">                .map(c -&gt; !c.isEmpty())</span>
+<span class="fc" id="L790">                .orElse(false);</span>
+
+<span class="fc bfc" id="L792" title="All 6 branches covered.">        if (metadata.getDescription() == null &amp;&amp; !hasProperties &amp;&amp; !hasSchema) {</span>
+          // metadata should only be set when there is an actual change in metadata.
+<span class="fc" id="L794">          throw new BaseException(</span>
+              ErrorCode.INVALID_ARGUMENT,
+              &quot;At least one of description, properties, or schema must be set in commit.metadata&quot;);
+        }
+<span class="fc bfc" id="L798" title="All 2 branches covered.">        if (propertiesOpt.isPresent()) {</span>
+<span class="fc" id="L799">          Optional&lt;String&gt; propertiesTableIdOpt = propertiesOpt.map(p -&gt; p.get(&quot;ucTableId&quot;));</span>
+<span class="fc bfc" id="L800" title="All 2 branches covered.">          if (propertiesTableIdOpt.isEmpty()) {</span>
+<span class="fc" id="L801">            throw new BaseException(</span>
+                ErrorCode.INVALID_ARGUMENT, &quot;commit does not contain ucTableId in the properties.&quot;);
+          }
+<span class="fc bfc" id="L804" title="All 2 branches covered.">          if (!propertiesTableIdOpt.get().equals(commit.getTableId())) {</span>
+            // This is to ensure that the Delta table's log on the file system has the table id
+            // stored as a property. An extra check to ensure that the filesystem-based information
+            // and the catalog-based information is in sync. for example, if some buggy connector
+            // accidentally updated table A on the file system, but send the commit to table B in
+            // UC, then this check will catch it as table A's properties in the log will have a
+            // different id than the table B's id in UC.
+<span class="fc" id="L811">            throw new BaseException(</span>
+                ErrorCode.INVALID_ARGUMENT,
+<span class="fc" id="L813">                String.format(</span>
+                    &quot;the table being committed (%s) does not match the properties ucTableId(%s).&quot;,
+<span class="fc" id="L815">                    commit.getTableId(), propertiesTableIdOpt.get()));</span>
+          }
+        }
+      }
+<span class="fc" id="L819">    } else {</span>
+      // If commit info is null, then it should be a backfill only commit
+<span class="fc bfc" id="L821" title="All 2 branches covered.">      if (commit.getLatestBackfilledVersion() == null) {</span>
+<span class="fc" id="L822">        throw new BaseException(</span>
+            ErrorCode.INVALID_ARGUMENT,
+            &quot;Either commit_info or latest_backfilled_version must be defined&quot;);
+      }
+<span class="fc bfc" id="L826" title="All 2 branches covered.">      if (commit.getMetadata() != null) {</span>
+<span class="fc" id="L827">        throw new BaseException(</span>
+            ErrorCode.INVALID_ARGUMENT, &quot;metadata shouldn't be set for backfill only commit&quot;);
+      }
+    }
+<span class="fc" id="L831">  }</span>
+
+  /**
+   * Validates that a table is eligible for Delta commits.
+   *
+   * &lt;p&gt;For a table to support Delta commits, it must:
+   *
+   * &lt;ul&gt;
+   *   &lt;li&gt;Be a managed table (not external)
+   *   &lt;li&gt;Use the Delta data source format
+   *   &lt;li&gt;Have a valid URI/URL defined
+   * &lt;/ul&gt;
+   *
+   * @param tableInfoDAO the table information data access object to validate
+   * @throws BaseException if the table doesn't meet requirements for Delta commits
+   */
+  private static void validateTable(TableInfoDAO tableInfoDAO) {
+<span class="fc" id="L848">    ValidationUtils.checkArgument(</span>
+<span class="pc bpc" id="L849" title="1 of 2 branches missed.">        tableInfoDAO.getType() != null</span>
+<span class="fc bfc" id="L850" title="All 2 branches covered.">            &amp;&amp; tableInfoDAO.getType().equals(TableType.MANAGED.toString()),</span>
+        &quot;Only managed tables are supported for Delta commits&quot;);
+<span class="fc" id="L852">    ValidationUtils.checkArgument(</span>
+<span class="pc bpc" id="L853" title="1 of 2 branches missed.">        tableInfoDAO.getDataSourceFormat() != null</span>
+<span class="pc bpc" id="L854" title="1 of 2 branches missed.">            &amp;&amp; tableInfoDAO.getDataSourceFormat().equals(DataSourceFormat.DELTA.toString()),</span>
+        &quot;Only delta tables are supported for Delta commits&quot;);
+<span class="pc bpc" id="L856" title="1 of 2 branches missed.">    if (tableInfoDAO.getUrl() == null) {</span>
+<span class="nc" id="L857">      throw new BaseException(</span>
+<span class="nc" id="L858">          ErrorCode.DATA_LOSS, &quot;Managed table doesn't have a URI: &quot; + tableInfoDAO.getId());</span>
+    }
+<span class="fc" id="L860">  }</span>
+
+  /**
+   * Validates that a table is eligible for the commit and that the commit's table URI matches.
+   *
+   * &lt;p&gt;This method first validates the table meets all requirements for Delta commits, then ensures
+   * the table URI specified in the commit request matches the table's registered URI. URIs are
+   * standardized before comparison to handle format variations.
+   *
+   * @param commit the commit request containing the table URI
+   * @param tableInfoDAO the table information data access object
+   * @throws BaseException if validation fails or URIs don't match
+   */
+  private static void validateTableForCommit(DeltaCommit commit, TableInfoDAO tableInfoDAO) {
+<span class="fc" id="L874">    validateTable(tableInfoDAO);</span>
+<span class="fc" id="L875">    ValidationUtils.checkArgument(</span>
+<span class="fc" id="L876">        FileOperations.toStandardizedURIString(commit.getTableUri())</span>
+<span class="fc" id="L877">            .equals(FileOperations.toStandardizedURIString(tableInfoDAO.getUrl())),</span>
+        &quot;Table URI in commit %s does not match the table path %s&quot;,
+<span class="fc" id="L879">        commit.getTableUri(),</span>
+<span class="fc" id="L880">        tableInfoDAO.getUrl());</span>
+<span class="fc" id="L881">  }</span>
+
+  /**
+   * Permanently deletes all commits associated with a table. This method is called when a table is
+   * being deleted.
+   *
+   * &lt;p&gt;The method performs batch deletions with retries to handle tables that may have accumulated
+   * more commits than the normal limit. It logs errors if the deletion exceeds expected thresholds
+   * or fails to complete.
+   *
+   * @param session the Hibernate session for database operations
+   * @param tableId the unique identifier of the table whose commits should be deleted
+   */
+  public void permanentlyDeleteTableCommits(Session session, UUID tableId) {
+    // In case some tables got more commits than allowed, we still want to purge the commits
+    // aggressively, so we allow 10x factor here. We also cap the number of iterations at 100 for
+    // safety measures in case the constants are changed.
+<span class="fc" id="L898">    int MAX_ITERATIONS = Math.min(100, MAX_NUM_COMMITS_PER_TABLE * 10 / NUM_COMMITS_PER_BATCH);</span>
+<span class="fc" id="L899">    boolean allDeleted = false;</span>
+<span class="fc" id="L900">    int numDeleted = 0;</span>
+<span class="pc bpc" id="L901" title="1 of 2 branches missed.">    for (int i = 0; i &lt; MAX_ITERATIONS; i++) {</span>
+<span class="fc" id="L902">      int deleted = deleteCommits(session, tableId);</span>
+<span class="fc" id="L903">      numDeleted += deleted;</span>
+<span class="pc bpc" id="L904" title="1 of 2 branches missed.">      if (deleted &lt; NUM_COMMITS_PER_BATCH) {</span>
+<span class="fc" id="L905">        allDeleted = true;</span>
+<span class="fc" id="L906">        break;</span>
+      }
+    }
+<span class="fc bfc" id="L909" title="All 2 branches covered.">    if (numDeleted &gt; MAX_NUM_COMMITS_PER_TABLE) {</span>
+<span class="fc" id="L910">      LOGGER.error(</span>
+          &quot;Purged {} commits for table {}, which exceeds the maximum allowed number of &quot;
+              + &quot;commits per table&quot;,
+<span class="fc" id="L913">          numDeleted,</span>
+          tableId);
+    }
+<span class="pc bpc" id="L916" title="1 of 2 branches missed.">    if (!allDeleted) {</span>
+<span class="nc" id="L917">      LOGGER.error(</span>
+<span class="nc" id="L918">          &quot;Failed to purge all commits for table {} after {} iterations&quot;, tableId, MAX_ITERATIONS);</span>
+    }
+<span class="fc" id="L920">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.7.202105040129</span></div></body></html>

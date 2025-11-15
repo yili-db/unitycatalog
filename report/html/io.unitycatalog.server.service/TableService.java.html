@@ -1,0 +1,167 @@
+<?xml version="1.0" encoding="utf-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>TableService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=2;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Jacoco Coverage Report</a> &gt; <a href="index.source.html" class="el_package">io.unitycatalog.server.service</a> &gt; <span class="el_source">TableService.java</span></div><h1>TableService.java</h1><pre class="source lang-java linenums">package io.unitycatalog.server.service;
+
+import static io.unitycatalog.server.model.SecurableType.CATALOG;
+import static io.unitycatalog.server.model.SecurableType.METASTORE;
+import static io.unitycatalog.server.model.SecurableType.SCHEMA;
+import static io.unitycatalog.server.model.SecurableType.TABLE;
+
+import io.unitycatalog.server.auth.UnityCatalogAuthorizer;
+import io.unitycatalog.server.auth.annotation.AuthorizeExpression;
+import io.unitycatalog.server.auth.annotation.AuthorizeKey;
+import io.unitycatalog.server.auth.annotation.AuthorizeKeys;
+import io.unitycatalog.server.exception.GlobalExceptionHandler;
+import io.unitycatalog.server.model.CatalogInfo;
+import io.unitycatalog.server.model.CreateTable;
+import io.unitycatalog.server.model.ListTablesResponse;
+import io.unitycatalog.server.model.SchemaInfo;
+import io.unitycatalog.server.model.TableInfo;
+import io.unitycatalog.server.persist.CatalogRepository;
+import io.unitycatalog.server.persist.MetastoreRepository;
+import io.unitycatalog.server.persist.Repositories;
+import io.unitycatalog.server.persist.SchemaRepository;
+import io.unitycatalog.server.persist.TableRepository;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
+import com.linecorp.armeria.common.HttpResponse;
+import com.linecorp.armeria.common.HttpStatus;
+import com.linecorp.armeria.server.annotation.Delete;
+import com.linecorp.armeria.server.annotation.ExceptionHandler;
+import com.linecorp.armeria.server.annotation.Get;
+import com.linecorp.armeria.server.annotation.Param;
+import com.linecorp.armeria.server.annotation.Post;
+import lombok.SneakyThrows;
+
+<span class="pc bpc" id="L36" title="1 of 2 branches missed.">@ExceptionHandler(GlobalExceptionHandler.class)</span>
+public class TableService extends AuthorizedService {
+
+  private final TableRepository tableRepository;
+  private final SchemaRepository schemaRepository;
+  private final CatalogRepository catalogRepository;
+  private final MetastoreRepository metastoreRepository;
+
+<span class="pc" id="L44">  @SneakyThrows</span>
+  public TableService(UnityCatalogAuthorizer authorizer, Repositories repositories) {
+<span class="fc" id="L46">    super(authorizer, repositories.getUserRepository());</span>
+<span class="fc" id="L47">    this.tableRepository = repositories.getTableRepository();</span>
+<span class="fc" id="L48">    this.schemaRepository = repositories.getSchemaRepository();</span>
+<span class="fc" id="L49">    this.catalogRepository = repositories.getCatalogRepository();</span>
+<span class="fc" id="L50">    this.metastoreRepository = repositories.getMetastoreRepository();</span>
+<span class="fc" id="L51">  }</span>
+
+  @Post(&quot;&quot;)
+  @AuthorizeExpression(&quot;&quot;&quot;
+      (#authorizeAny(#principal, #catalog, OWNER, USE_CATALOG) &amp;&amp;
+          #authorize(#principal, #schema, OWNER)) ||
+      (#authorizeAny(#principal, #catalog, OWNER, USE_CATALOG) &amp;&amp;
+          #authorizeAll(#principal, #schema, USE_SCHEMA, CREATE_TABLE))
+      &quot;&quot;&quot;)
+  @AuthorizeKey(METASTORE)
+  public HttpResponse createTable(
+      @AuthorizeKeys({
+        @AuthorizeKey(value = SCHEMA, key = &quot;schema_name&quot;),
+        @AuthorizeKey(value = CATALOG, key = &quot;catalog_name&quot;)
+      })
+      CreateTable createTable) {
+<span class="pc bpc" id="L67" title="2 of 4 branches missed.">    assert createTable != null;</span>
+<span class="fc" id="L68">    TableInfo tableInfo = tableRepository.createTable(createTable);</span>
+
+<span class="fc" id="L70">    SchemaInfo schemaInfo =</span>
+<span class="fc" id="L71">        schemaRepository.getSchema(tableInfo.getCatalogName() + &quot;.&quot; + tableInfo.getSchemaName());</span>
+<span class="fc" id="L72">    initializeHierarchicalAuthorization(tableInfo.getTableId(), schemaInfo.getSchemaId());</span>
+
+<span class="fc" id="L74">    return HttpResponse.ofJson(tableInfo);</span>
+  }
+
+  @Get(&quot;/{full_name}&quot;)
+  @AuthorizeExpression(&quot;&quot;&quot;
+      #authorize(#principal, #metastore, OWNER) ||
+      #authorize(#principal, #catalog, OWNER) ||
+      (#authorize(#principal, #schema, OWNER) &amp;&amp; #authorize(#principal, #catalog, USE_CATALOG)) ||
+      (#authorize(#principal, #schema, USE_SCHEMA) &amp;&amp;
+          #authorize(#principal, #catalog, USE_CATALOG) &amp;&amp;
+          #authorizeAny(#principal, #table, OWNER, SELECT, MODIFY))
+      &quot;&quot;&quot;)
+  @AuthorizeKey(METASTORE)
+  public HttpResponse getTable(@Param(&quot;full_name&quot;) @AuthorizeKey(TABLE) String fullName) {
+<span class="pc bpc" id="L88" title="2 of 4 branches missed.">    assert fullName != null;</span>
+<span class="fc" id="L89">    TableInfo tableInfo = tableRepository.getTable(fullName);</span>
+<span class="fc" id="L90">    return HttpResponse.ofJson(tableInfo);</span>
+  }
+
+  @Get(&quot;&quot;)
+  @AuthorizeExpression(&quot;#defer&quot;)
+  public HttpResponse listTables(
+      @Param(&quot;catalog_name&quot;) String catalogName,
+      @Param(&quot;schema_name&quot;) String schemaName,
+      @Param(&quot;max_results&quot;) Optional&lt;Integer&gt; maxResults,
+      @Param(&quot;page_token&quot;) Optional&lt;String&gt; pageToken,
+      @Param(&quot;omit_properties&quot;) Optional&lt;Boolean&gt; omitProperties,
+      @Param(&quot;omit_columns&quot;) Optional&lt;Boolean&gt; omitColumns) {
+
+<span class="fc" id="L103">    ListTablesResponse listTablesResponse = tableRepository.listTables(</span>
+        catalogName,
+        schemaName,
+        maxResults,
+        pageToken,
+<span class="fc" id="L108">        omitProperties.orElse(false),</span>
+<span class="fc" id="L109">        omitColumns.orElse(false));</span>
+
+<span class="fc" id="L111">    filterTables(&quot;&quot;&quot;</span>
+        #authorize(#principal, #metastore, OWNER) ||
+        #authorize(#principal, #catalog, OWNER) ||
+        (#authorize(#principal, #schema, OWNER) &amp;&amp; #authorize(#principal, #catalog, USE_CATALOG)) ||
+        (#authorize(#principal, #schema, USE_SCHEMA) &amp;&amp;
+            #authorize(#principal, #catalog, USE_CATALOG) &amp;&amp;
+            #authorizeAny(#principal, #table, OWNER, SELECT, MODIFY))
+<span class="fc" id="L118">        &quot;&quot;&quot;, listTablesResponse.getTables());</span>
+
+<span class="fc" id="L120">    return HttpResponse.ofJson(listTablesResponse);</span>
+  }
+
+  @Delete(&quot;/{full_name}&quot;)
+  @AuthorizeExpression(&quot;&quot;&quot;
+      #authorize(#principal, #catalog, OWNER) ||
+      (#authorize(#principal, #schema, OWNER) &amp;&amp; #authorize(#principal, #catalog, USE_CATALOG)) ||
+      (#authorize(#principal, #schema, USE_SCHEMA) &amp;&amp;
+          #authorize(#principal, #catalog, USE_CATALOG) &amp;&amp;
+          #authorize(#principal, #table, OWNER))
+      &quot;&quot;&quot;)
+  public HttpResponse deleteTable(@Param(&quot;full_name&quot;) @AuthorizeKey(TABLE) String fullName) {
+<span class="fc" id="L132">    TableInfo tableInfo = tableRepository.getTable(fullName);</span>
+<span class="fc" id="L133">    tableRepository.deleteTable(fullName);</span>
+
+<span class="fc" id="L135">    SchemaInfo schemaInfo =</span>
+<span class="fc" id="L136">        schemaRepository.getSchema(tableInfo.getCatalogName() + &quot;.&quot; + tableInfo.getSchemaName());</span>
+<span class="fc" id="L137">    removeHierarchicalAuthorizations(tableInfo.getTableId(), schemaInfo.getSchemaId());</span>
+
+<span class="fc" id="L139">    return HttpResponse.of(HttpStatus.OK);</span>
+  }
+
+  public void filterTables(String expression, List&lt;TableInfo&gt; entries) {
+    // TODO: would be nice to move this to filtering in the Decorator response
+<span class="fc" id="L144">    UUID principalId = userRepository.findPrincipalId();</span>
+
+<span class="fc" id="L146">    evaluator.filter(</span>
+        principalId,
+        expression,
+        entries,
+        ti -&gt; {
+          CatalogInfo catalogInfo = catalogRepository.getCatalog(ti.getCatalogName());
+          SchemaInfo schemaInfo =
+              schemaRepository.getSchema(ti.getCatalogName() + &quot;.&quot; + ti.getSchemaName());
+          return Map.of(
+              METASTORE,
+              metastoreRepository.getMetastoreId(),
+              CATALOG,
+              UUID.fromString(catalogInfo.getId()),
+              SCHEMA,
+              UUID.fromString(schemaInfo.getSchemaId()),
+              TABLE,
+              UUID.fromString(ti.getTableId()));
+        });
+<span class="fc" id="L164">  }</span>
+}
+
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.7.202105040129</span></div></body></html>

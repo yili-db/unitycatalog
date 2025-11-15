@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="utf-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>CatalogService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=2;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Jacoco Coverage Report</a> &gt; <a href="index.source.html" class="el_package">io.unitycatalog.server.service</a> &gt; <span class="el_source">CatalogService.java</span></div><h1>CatalogService.java</h1><pre class="source lang-java linenums">package io.unitycatalog.server.service;
+
+import com.linecorp.armeria.common.HttpResponse;
+import com.linecorp.armeria.common.HttpStatus;
+import com.linecorp.armeria.server.annotation.Delete;
+import com.linecorp.armeria.server.annotation.ExceptionHandler;
+import com.linecorp.armeria.server.annotation.Get;
+import com.linecorp.armeria.server.annotation.Param;
+import com.linecorp.armeria.server.annotation.Patch;
+import com.linecorp.armeria.server.annotation.Post;
+import io.unitycatalog.server.auth.UnityCatalogAuthorizer;
+import io.unitycatalog.server.auth.annotation.AuthorizeExpression;
+import io.unitycatalog.server.auth.annotation.AuthorizeKey;
+import io.unitycatalog.server.exception.GlobalExceptionHandler;
+import io.unitycatalog.server.model.CatalogInfo;
+import io.unitycatalog.server.model.CreateCatalog;
+import io.unitycatalog.server.model.ListCatalogsResponse;
+import io.unitycatalog.server.model.UpdateCatalog;
+import io.unitycatalog.server.persist.CatalogRepository;
+import io.unitycatalog.server.persist.MetastoreRepository;
+import io.unitycatalog.server.persist.Repositories;
+import lombok.SneakyThrows;
+
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
+
+import static io.unitycatalog.server.model.SecurableType.CATALOG;
+import static io.unitycatalog.server.model.SecurableType.METASTORE;
+
+@ExceptionHandler(GlobalExceptionHandler.class)
+public class CatalogService extends AuthorizedService {
+  private final CatalogRepository catalogRepository;
+  private final MetastoreRepository metastoreRepository;
+
+<span class="pc" id="L37">  @SneakyThrows</span>
+  public CatalogService(UnityCatalogAuthorizer authorizer, Repositories repositories) {
+<span class="fc" id="L39">    super(authorizer, repositories.getUserRepository());</span>
+<span class="fc" id="L40">    this.catalogRepository = repositories.getCatalogRepository();</span>
+<span class="fc" id="L41">    this.metastoreRepository = repositories.getMetastoreRepository();</span>
+<span class="fc" id="L42">  }</span>
+
+  @Post(&quot;&quot;)
+  @AuthorizeExpression(&quot;#authorizeAny(#principal, #metastore, OWNER, CREATE_CATALOG)&quot;)
+  @AuthorizeKey(METASTORE)
+  public HttpResponse createCatalog(CreateCatalog createCatalog) {
+<span class="fc" id="L48">    CatalogInfo catalogInfo = catalogRepository.addCatalog(createCatalog);</span>
+<span class="fc" id="L49">    initializeBasicAuthorization(catalogInfo.getId());</span>
+<span class="fc" id="L50">    return HttpResponse.ofJson(catalogInfo);</span>
+  }
+
+  @Get(&quot;&quot;)
+  @AuthorizeExpression(&quot;#defer&quot;)
+  public HttpResponse listCatalogs(
+      @Param(&quot;max_results&quot;) Optional&lt;Integer&gt; maxResults,
+      @Param(&quot;page_token&quot;) Optional&lt;String&gt; pageToken) {
+<span class="fc" id="L58">    ListCatalogsResponse listCatalogsResponse = catalogRepository.listCatalogs(</span>
+        maxResults, pageToken);
+
+<span class="fc" id="L61">    filterCatalogs(&quot;&quot;&quot;</span>
+        #authorize(#principal, #metastore, OWNER) ||
+        #authorizeAny(#principal, #catalog, OWNER, USE_CATALOG)
+        &quot;&quot;&quot;,
+<span class="fc" id="L65">        listCatalogsResponse.getCatalogs());</span>
+
+<span class="fc" id="L67">    return HttpResponse.ofJson(listCatalogsResponse);</span>
+  }
+
+  @Get(&quot;/{name}&quot;)
+  @AuthorizeExpression(&quot;&quot;&quot;
+      #authorize(#principal, #metastore, OWNER) ||
+      #authorizeAny(#principal, #catalog, OWNER, USE_CATALOG)
+      &quot;&quot;&quot;)
+  @AuthorizeKey(METASTORE)
+  public HttpResponse getCatalog(@Param(&quot;name&quot;) @AuthorizeKey(CATALOG) String name) {
+<span class="fc" id="L77">    return HttpResponse.ofJson(catalogRepository.getCatalog(name));</span>
+  }
+
+  @Patch(&quot;/{name}&quot;)
+  @AuthorizeExpression(&quot;&quot;&quot;
+      #authorize(#principal, #catalog, OWNER)
+      &quot;&quot;&quot;)
+  @AuthorizeKey(METASTORE)
+  public HttpResponse updateCatalog(
+      @Param(&quot;name&quot;) @AuthorizeKey(CATALOG) String name,
+      UpdateCatalog updateCatalog) {
+<span class="fc" id="L88">    return HttpResponse.ofJson(catalogRepository.updateCatalog(name, updateCatalog));</span>
+  }
+
+  @Delete(&quot;/{name}&quot;)
+  @AuthorizeExpression(&quot;&quot;&quot;
+      #authorize(#principal, #metastore, OWNER) ||
+      #authorizeAny(#principal, #catalog, OWNER, USE_CATALOG)
+      &quot;&quot;&quot;)
+  @AuthorizeKey(METASTORE)
+  public HttpResponse deleteCatalog(
+      @Param(&quot;name&quot;) @AuthorizeKey(CATALOG) String name,
+      @Param(&quot;force&quot;) Optional&lt;Boolean&gt; force) {
+<span class="fc" id="L100">    CatalogInfo catalogInfo = catalogRepository.getCatalog(name);</span>
+<span class="fc" id="L101">    catalogRepository.deleteCatalog(name, force.orElse(false));</span>
+<span class="fc" id="L102">    removeAuthorizations(catalogInfo.getId());</span>
+<span class="fc" id="L103">    return HttpResponse.of(HttpStatus.OK);</span>
+  }
+
+  public void filterCatalogs(String expression, List&lt;CatalogInfo&gt; entries) {
+    // TODO: would be nice to move this to filtering in the Decorator response
+<span class="fc" id="L108">    UUID principalId = userRepository.findPrincipalId();</span>
+
+<span class="fc" id="L110">    evaluator.filter(</span>
+        principalId,
+        expression,
+        entries,
+        ci -&gt; Map.of(
+            METASTORE,
+            metastoreRepository.getMetastoreId(),
+            CATALOG,
+            UUID.fromString(ci.getId())));
+<span class="fc" id="L119">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.7.202105040129</span></div></body></html>

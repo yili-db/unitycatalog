@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="utf-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>OptionParser.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=2;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Jacoco Coverage Report</a> &gt; <a href="index.source.html" class="el_package">io.unitycatalog.server.utils</a> &gt; <span class="el_source">OptionParser.java</span></div><h1>OptionParser.java</h1><pre class="source lang-java linenums">package io.unitycatalog.server.utils;
+
+import com.google.common.annotations.VisibleForTesting;
+import lombok.Getter;
+import lombok.Setter;
+import org.apache.commons.cli.CommandLine;
+import org.apache.commons.cli.CommandLineParser;
+import org.apache.commons.cli.DefaultParser;
+import org.apache.commons.cli.HelpFormatter;
+import org.apache.commons.cli.Option;
+import org.apache.commons.cli.Options;
+import org.apache.commons.cli.ParseException;
+
+<span class="fc" id="L14">@Setter</span>
+@Getter
+public class OptionParser {
+<span class="fc" id="L17">  private int port = 8080;</span>
+
+<span class="pc" id="L19">  private final Options options = new Options();</span>
+
+<span class="fc" id="L21">  public OptionParser() {</span>
+<span class="fc" id="L22">    options.addOption(</span>
+<span class="fc" id="L23">        Option.builder(&quot;p&quot;)</span>
+<span class="fc" id="L24">            .longOpt(&quot;port&quot;)</span>
+<span class="fc" id="L25">            .hasArg()</span>
+<span class="fc" id="L26">            .desc(&quot;Port number to run the server on. Default is 8080.&quot;)</span>
+<span class="fc" id="L27">            .type(Integer.class)</span>
+<span class="fc" id="L28">            .build());</span>
+<span class="fc" id="L29">    options.addOption(</span>
+<span class="fc" id="L30">        Option.builder(&quot;v&quot;)</span>
+<span class="fc" id="L31">            .longOpt(&quot;version&quot;)</span>
+<span class="fc" id="L32">            .hasArg(false)</span>
+<span class="fc" id="L33">            .desc(&quot;Display the version of the Unity Catalog server&quot;)</span>
+<span class="fc" id="L34">            .build());</span>
+<span class="fc" id="L35">    options.addOption(&quot;h&quot;, &quot;help&quot;, false, &quot;Print help message.&quot;);</span>
+<span class="fc" id="L36">  }</span>
+
+  private void printHelpAndExit(int code) {
+<span class="fc" id="L39">    new HelpFormatter().printHelp(&quot;bin/start-uc-server&quot;, options);</span>
+<span class="fc" id="L40">    exit(code);</span>
+<span class="fc" id="L41">  }</span>
+
+  @VisibleForTesting
+  protected void exit(int code) {
+<span class="nc" id="L45">    System.exit(code);</span>
+<span class="nc" id="L46">  }</span>
+
+  /**
+   * Parse the command line arguments
+   *
+   * @param args the command line arguments
+   */
+  public void parse(String[] args) {
+<span class="fc" id="L54">    CommandLineParser parser = new DefaultParser();</span>
+    try {
+<span class="fc" id="L56">      CommandLine cmd = parser.parse(options, args);</span>
+<span class="fc bfc" id="L57" title="All 2 branches covered.">      if (cmd.hasOption(&quot;h&quot;)) {</span>
+<span class="fc" id="L58">        printHelpAndExit(0);</span>
+      }
+<span class="fc bfc" id="L60" title="All 2 branches covered.">      if (cmd.hasOption(&quot;v&quot;)) {</span>
+<span class="fc" id="L61">        System.out.println(VersionUtils.VERSION);</span>
+<span class="fc" id="L62">        exit(0);</span>
+      }
+<span class="fc bfc" id="L64" title="All 2 branches covered.">      if (cmd.hasOption(&quot;p&quot;)) {</span>
+<span class="fc" id="L65">        setPort(cmd.getParsedOptionValue(&quot;p&quot;));</span>
+      }
+<span class="fc" id="L67">    } catch (ParseException e) {</span>
+<span class="fc" id="L68">      System.out.println();</span>
+<span class="fc" id="L69">      System.out.println(&quot;Parsing Failed. Reason: &quot; + e.getMessage());</span>
+<span class="fc" id="L70">      System.out.println();</span>
+<span class="fc" id="L71">      printHelpAndExit(-1);</span>
+<span class="fc" id="L72">    }</span>
+<span class="fc" id="L73">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.7.202105040129</span></div></body></html>

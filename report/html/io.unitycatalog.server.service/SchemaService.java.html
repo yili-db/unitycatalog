@@ -1,0 +1,156 @@
+<?xml version="1.0" encoding="utf-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>SchemaService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=2;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Jacoco Coverage Report</a> &gt; <a href="index.source.html" class="el_package">io.unitycatalog.server.service</a> &gt; <span class="el_source">SchemaService.java</span></div><h1>SchemaService.java</h1><pre class="source lang-java linenums">package io.unitycatalog.server.service;
+
+import static io.unitycatalog.server.model.SecurableType.CATALOG;
+import static io.unitycatalog.server.model.SecurableType.METASTORE;
+import static io.unitycatalog.server.model.SecurableType.SCHEMA;
+
+import io.unitycatalog.server.auth.UnityCatalogAuthorizer;
+import io.unitycatalog.server.auth.annotation.AuthorizeExpression;
+import io.unitycatalog.server.auth.annotation.AuthorizeKey;
+import io.unitycatalog.server.exception.GlobalExceptionHandler;
+import io.unitycatalog.server.model.CatalogInfo;
+import io.unitycatalog.server.model.CreateSchema;
+import io.unitycatalog.server.model.ListSchemasResponse;
+import io.unitycatalog.server.model.SchemaInfo;
+import io.unitycatalog.server.model.UpdateSchema;
+import io.unitycatalog.server.persist.CatalogRepository;
+import io.unitycatalog.server.persist.MetastoreRepository;
+import io.unitycatalog.server.persist.Repositories;
+import io.unitycatalog.server.persist.SchemaRepository;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
+import com.linecorp.armeria.common.HttpResponse;
+import com.linecorp.armeria.common.HttpStatus;
+import com.linecorp.armeria.server.annotation.Delete;
+import com.linecorp.armeria.server.annotation.ExceptionHandler;
+import com.linecorp.armeria.server.annotation.Get;
+import com.linecorp.armeria.server.annotation.Param;
+import com.linecorp.armeria.server.annotation.Patch;
+import com.linecorp.armeria.server.annotation.Post;
+import lombok.SneakyThrows;
+
+@ExceptionHandler(GlobalExceptionHandler.class)
+public class SchemaService extends AuthorizedService {
+  private final SchemaRepository schemaRepository;
+  private final CatalogRepository catalogRepository;
+  private final MetastoreRepository metastoreRepository;
+
+<span class="pc" id="L40">  @SneakyThrows</span>
+  public SchemaService(UnityCatalogAuthorizer authorizer, Repositories repositories) {
+<span class="fc" id="L42">    super(authorizer, repositories.getUserRepository());</span>
+<span class="fc" id="L43">    this.schemaRepository = repositories.getSchemaRepository();</span>
+<span class="fc" id="L44">    this.catalogRepository = repositories.getCatalogRepository();</span>
+<span class="fc" id="L45">    this.metastoreRepository = repositories.getMetastoreRepository();</span>
+<span class="fc" id="L46">  }</span>
+
+  @Post(&quot;&quot;)
+  @AuthorizeExpression(&quot;&quot;&quot;
+      #authorize(#principal, #catalog, OWNER) ||
+      #authorizeAll(#principal, #catalog, USE_CATALOG, CREATE_SCHEMA)
+      &quot;&quot;&quot;)
+  @AuthorizeKey(METASTORE)
+  public HttpResponse createSchema(
+      @AuthorizeKey(value = CATALOG, key = &quot;catalog_name&quot;) CreateSchema createSchema) {
+<span class="fc" id="L56">    SchemaInfo schemaInfo = schemaRepository.createSchema(createSchema);</span>
+
+<span class="fc" id="L58">    CatalogInfo catalogInfo = catalogRepository.getCatalog(schemaInfo.getCatalogName());</span>
+<span class="fc" id="L59">    initializeHierarchicalAuthorization(schemaInfo.getSchemaId(), catalogInfo.getId());</span>
+
+<span class="fc" id="L61">    return HttpResponse.ofJson(schemaInfo);</span>
+  }
+
+  @Get(&quot;&quot;)
+  @AuthorizeExpression(&quot;#defer&quot;)
+  public HttpResponse listSchemas(
+      @Param(&quot;catalog_name&quot;) String catalogName,
+      @Param(&quot;max_results&quot;) Optional&lt;Integer&gt; maxResults,
+      @Param(&quot;page_token&quot;) Optional&lt;String&gt; pageToken) {
+<span class="fc" id="L70">    ListSchemasResponse listSchemasResponse =</span>
+<span class="fc" id="L71">        schemaRepository.listSchemas(catalogName, maxResults, pageToken);</span>
+<span class="fc" id="L72">    filterSchemas(&quot;&quot;&quot;</span>
+        #authorize(#principal, #metastore, OWNER) ||
+        #authorize(#principal, #catalog, OWNER) ||
+        (#authorize(#principal, #schema, USE_SCHEMA) &amp;&amp;
+            #authorizeAny(#principal, #catalog, OWNER, USE_CATALOG))
+        &quot;&quot;&quot;,
+<span class="fc" id="L78">        listSchemasResponse.getSchemas());</span>
+<span class="fc" id="L79">    return HttpResponse.ofJson(listSchemasResponse);</span>
+  }
+
+  @Get(&quot;/{full_name}&quot;)
+  @AuthorizeExpression(&quot;&quot;&quot;
+      #authorize(#principal, #metastore, OWNER) ||
+      #authorize(#principal, #catalog, OWNER) ||
+      (#authorizeAny(#principal, #schema, OWNER, USE_SCHEMA) &amp;&amp;
+          #authorizeAny(#principal, #catalog, USE_CATALOG))
+      &quot;&quot;&quot;)
+  @AuthorizeKey(METASTORE)
+  public HttpResponse getSchema(@Param(&quot;full_name&quot;) @AuthorizeKey(SCHEMA) String fullName) {
+<span class="fc" id="L91">    return HttpResponse.ofJson(schemaRepository.getSchema(fullName));</span>
+  }
+
+  @Patch(&quot;/{full_name}&quot;)
+  @AuthorizeExpression(&quot;&quot;&quot;
+      #authorize(#principal, #metastore, OWNER) ||
+      #authorize(#principal, #schema, OWNER) ||
+      #authorizeAll(#principal, #catalog, USE_CATALOG, USE_SCHEMA) ||
+      (#authorize(#principal, #schema, USE_SCHEMA) &amp;&amp;
+          #authorize(#principal, #catalog, USE_CATALOG))
+      &quot;&quot;&quot;)
+  @AuthorizeKey(METASTORE)
+  public HttpResponse updateSchema(
+      @Param(&quot;full_name&quot;) @AuthorizeKey(SCHEMA) String fullName,
+      UpdateSchema updateSchema) {
+    // TODO: This method does not adhere to the complete access control rules of the Databricks
+    // Unity Catalog
+<span class="fc" id="L108">    return HttpResponse.ofJson(schemaRepository.updateSchema(fullName, updateSchema));</span>
+  }
+
+  @Delete(&quot;/{full_name}&quot;)
+  @AuthorizeExpression(&quot;&quot;&quot;
+      #authorize(#principal, #metastore, OWNER) ||
+      #authorize(#principal, #catalog, OWNER) ||
+      (#authorize(#principal, #schema, OWNER) &amp;&amp;
+          #authorizeAny(#principal, #catalog, USE_CATALOG))
+      &quot;&quot;&quot;)
+  @AuthorizeKey(METASTORE)
+  public HttpResponse deleteSchema(
+      @Param(&quot;full_name&quot;) @AuthorizeKey(SCHEMA) String fullName,
+      @Param(&quot;force&quot;) Optional&lt;Boolean&gt; force) {
+<span class="fc" id="L122">    SchemaInfo schemaInfo = schemaRepository.getSchema(fullName);</span>
+<span class="fc" id="L123">    schemaRepository.deleteSchema(fullName, force.orElse(false));</span>
+
+<span class="fc" id="L125">    CatalogInfo catalogInfo = catalogRepository.getCatalog(schemaInfo.getCatalogName());</span>
+
+    // First remove any child table links
+<span class="fc" id="L128">    authorizer.removeHierarchyChildren(UUID.fromString(schemaInfo.getSchemaId()));</span>
+    // Then remove schema from catalog and clear authorizations
+<span class="fc" id="L130">    removeHierarchicalAuthorizations(schemaInfo.getSchemaId(), catalogInfo.getId());</span>
+
+<span class="fc" id="L132">    return HttpResponse.of(HttpStatus.OK);</span>
+  }
+
+  public void filterSchemas(String expression, List&lt;SchemaInfo&gt; entries) {
+    // TODO: would be nice to move this to filtering in the Decorator response
+<span class="fc" id="L137">    UUID principalId = userRepository.findPrincipalId();</span>
+
+<span class="fc" id="L139">    evaluator.filter(</span>
+        principalId,
+        expression,
+        entries,
+        si -&gt; {
+          CatalogInfo catalogInfo = catalogRepository.getCatalog(si.getCatalogName());
+          return Map.of(
+              METASTORE,
+              metastoreRepository.getMetastoreId(),
+              CATALOG,
+              UUID.fromString(catalogInfo.getId()),
+              SCHEMA,
+              UUID.fromString(si.getSchemaId()));
+        });
+<span class="fc" id="L153">  }</span>
+}
+
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.7.202105040129</span></div></body></html>

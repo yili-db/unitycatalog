@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="utf-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>MetastoreRepository.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=2;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Jacoco Coverage Report</a> &gt; <a href="index.source.html" class="el_package">io.unitycatalog.server.persist</a> &gt; <span class="el_source">MetastoreRepository.java</span></div><h1>MetastoreRepository.java</h1><pre class="source lang-java linenums">package io.unitycatalog.server.persist;
+
+import io.unitycatalog.server.exception.BaseException;
+import io.unitycatalog.server.exception.ErrorCode;
+import io.unitycatalog.server.model.GetMetastoreSummaryResponse;
+import io.unitycatalog.server.persist.dao.MetastoreDAO;
+import io.unitycatalog.server.persist.utils.TransactionManager;
+import java.util.UUID;
+import org.hibernate.Session;
+import org.hibernate.SessionFactory;
+import org.hibernate.query.Query;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+public class MetastoreRepository {
+<span class="fc" id="L16">  private static final Logger LOGGER = LoggerFactory.getLogger(MetastoreRepository.class);</span>
+  private final SessionFactory sessionFactory;
+
+<span class="fc" id="L19">  public MetastoreRepository(Repositories repositories, SessionFactory sessionFactory) {</span>
+<span class="fc" id="L20">    this.sessionFactory = sessionFactory;</span>
+<span class="fc" id="L21">  }</span>
+
+  public GetMetastoreSummaryResponse getMetastoreSummary() {
+<span class="fc" id="L24">    return TransactionManager.executeWithTransaction(</span>
+        sessionFactory,
+        session -&gt; {
+          MetastoreDAO metastoreDAO = getMetastoreDAO(session);
+          if (metastoreDAO == null) {
+            throw new BaseException(
+                ErrorCode.NOT_FOUND,
+                &quot;No metastore found. Please check if the server is initialized properly.&quot;);
+          }
+          return metastoreDAO.toGetMetastoreSummaryResponse();
+        },
+        &quot;Failed to get metastore summary&quot;,
+        /* readOnly = */ true);
+  }
+
+  public UUID getMetastoreId() {
+<span class="fc" id="L40">    return UUID.fromString(getMetastoreSummary().getMetastoreId());</span>
+  }
+
+  public MetastoreDAO getMetastoreDAO(Session session) {
+<span class="fc" id="L44">    Query&lt;MetastoreDAO&gt; query = session.createQuery(&quot;FROM MetastoreDAO&quot;, MetastoreDAO.class);</span>
+<span class="fc" id="L45">    query.setMaxResults(1);</span>
+<span class="fc" id="L46">    return query.uniqueResult();</span>
+  }
+
+  public MetastoreDAO initMetastoreIfNeeded() {
+<span class="fc" id="L50">    return TransactionManager.executeWithTransaction(</span>
+        sessionFactory,
+        session -&gt; {
+          MetastoreDAO metastoreDAO = getMetastoreDAO(session);
+          if (metastoreDAO == null) {
+            LOGGER.info(&quot;No metastore found, initializing a metastore for the server...&quot;);
+            metastoreDAO = new MetastoreDAO();
+            metastoreDAO.setId(UUID.randomUUID());
+            session.persist(metastoreDAO);
+          }
+          LOGGER.info(&quot;Server initialized with metastore id: {}&quot;, metastoreDAO.getId());
+          return metastoreDAO;
+        },
+        &quot;Failed to initialize metastore&quot;,
+        /* readOnly = */ false);
+  }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.7.202105040129</span></div></body></html>

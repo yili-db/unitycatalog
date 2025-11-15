@@ -1,0 +1,369 @@
+<?xml version="1.0" encoding="utf-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>UnityAccessDecorator.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=2;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Jacoco Coverage Report</a> &gt; <a href="index.source.html" class="el_package">io.unitycatalog.server.auth.decorator</a> &gt; <span class="el_source">UnityAccessDecorator.java</span></div><h1>UnityAccessDecorator.java</h1><pre class="source lang-java linenums">package io.unitycatalog.server.auth.decorator;
+
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.linecorp.armeria.common.HttpData;
+import com.linecorp.armeria.common.HttpRequest;
+import com.linecorp.armeria.common.HttpResponse;
+import com.linecorp.armeria.common.MediaType;
+import com.linecorp.armeria.internal.server.annotation.AnnotatedService;
+import com.linecorp.armeria.server.DecoratingHttpServiceFunction;
+import com.linecorp.armeria.server.HttpService;
+import com.linecorp.armeria.server.ServiceRequestContext;
+import com.linecorp.armeria.server.SimpleDecoratingHttpService;
+import com.linecorp.armeria.server.annotation.Param;
+import io.unitycatalog.server.auth.UnityCatalogAuthorizer;
+import io.unitycatalog.server.auth.annotation.AuthorizeExpression;
+import io.unitycatalog.server.auth.annotation.AuthorizeKey;
+import io.unitycatalog.server.auth.annotation.AuthorizeKeys;
+import io.unitycatalog.server.exception.BaseException;
+import io.unitycatalog.server.exception.ErrorCode;
+import io.unitycatalog.server.model.SecurableType;
+import io.unitycatalog.server.persist.Repositories;
+import io.unitycatalog.server.persist.UserRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.lang.reflect.Method;
+import java.lang.reflect.Parameter;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+
+import static io.unitycatalog.server.auth.decorator.KeyLocator.Source.PARAM;
+import static io.unitycatalog.server.auth.decorator.KeyLocator.Source.PAYLOAD;
+import static io.unitycatalog.server.auth.decorator.KeyLocator.Source.SYSTEM;
+
+/**
+ * Armeria access control Decorator.
+ * &lt;p&gt;
+ * This decorator provides the ability to protect Armeria service methods with per method access
+ * control rules. This decorator is used in conjunction with two annotations, @AuthorizeExpression
+ * and @AuthorizeKey to define authorization rules and identify requests parameters for objects
+ * to authorize with.
+ * &lt;p&gt;
+ * {@code @AuthorizeExpression} - This defines a Spring Expression Language expression to evaluate
+ * to make an authorization decision.
+ * {@code @AuthorizeKey} - This annotation is used to define request and payload parameters for the
+ * authorization context. These are typically things like catalog, schema and table names. This
+ * annotation may be used at both the method and method parameter context. It may be specified
+ * more than once per method to map parameters to object keys.
+ */
+public class UnityAccessDecorator implements DecoratingHttpServiceFunction {
+
+<span class="fc" id="L59">  private static final Logger LOGGER = LoggerFactory.getLogger(UnityAccessDecorator.class);</span>
+<span class="fc" id="L60">  private static final ObjectMapper MAPPER = new ObjectMapper();</span>
+  private final KeyMapper keyMapper;
+  private final UserRepository userRepository;
+
+  private final UnityAccessEvaluator evaluator;
+
+  public UnityAccessDecorator(UnityCatalogAuthorizer authorizer, Repositories repositories)
+<span class="fc" id="L67">      throws BaseException {</span>
+    try {
+<span class="fc" id="L69">      evaluator = new UnityAccessEvaluator(authorizer);</span>
+<span class="nc" id="L70">    } catch (NoSuchMethodException | IllegalAccessException e) {</span>
+<span class="nc" id="L71">      throw new BaseException(ErrorCode.INTERNAL, &quot;Error initializing access evaluator.&quot;, e);</span>
+<span class="fc" id="L72">    }</span>
+<span class="fc" id="L73">    keyMapper = new KeyMapper(repositories);</span>
+<span class="fc" id="L74">    userRepository = repositories.getUserRepository();</span>
+<span class="fc" id="L75">  }</span>
+
+  @Override
+  public HttpResponse serve(HttpService delegate, ServiceRequestContext ctx, HttpRequest req)
+      throws Exception {
+<span class="fc" id="L80">    LOGGER.debug(&quot;AccessDecorator checking {}&quot;, req.path());</span>
+
+<span class="fc" id="L82">    Method method = findServiceMethod(ctx.config().service());</span>
+
+<span class="pc bpc" id="L84" title="1 of 2 branches missed.">    if (method != null) {</span>
+
+      // Find the authorization parameters to use for this service method.
+<span class="fc" id="L87">      String expression = findAuthorizeExpression(method);</span>
+<span class="fc" id="L88">      List&lt;KeyLocator&gt; locator = findAuthorizeKeys(method);</span>
+
+<span class="fc bfc" id="L90" title="All 2 branches covered.">      if (expression != null) {</span>
+<span class="pc bpc" id="L91" title="1 of 2 branches missed.">        if (!locator.isEmpty()) {</span>
+<span class="fc" id="L92">          UUID principal = userRepository.findPrincipalId();</span>
+<span class="fc" id="L93">          return authorizeByRequest(delegate, ctx, req, principal, locator, expression);</span>
+        } else {
+<span class="nc" id="L95">          LOGGER.warn(&quot;No authorization resource(s) found.&quot;);</span>
+          // going to assume the expression is just #deny, #permit or #defer
+        }
+      } else {
+<span class="fc" id="L99">        LOGGER.debug(&quot;No authorization expression found.&quot;);</span>
+      }
+<span class="fc" id="L101">    } else {</span>
+<span class="nc" id="L102">      LOGGER.warn(&quot;Couldn't unwrap service.&quot;);</span>
+    }
+
+<span class="fc" id="L105">    return delegate.serve(ctx, req);</span>
+  }
+
+  private HttpResponse authorizeByRequest(
+      HttpService delegate,
+      ServiceRequestContext ctx,
+      HttpRequest req,
+      UUID principal,
+      List&lt;KeyLocator&gt; locators,
+      String expression) throws Exception {
+    //
+    // Based on the query and payload parameters defined on the service method (that
+    // have been gathered as Locators), we'll attempt to find the entity/resource that
+    // we want to authorize against.
+
+<span class="fc" id="L120">    Map&lt;SecurableType, Object&gt; resourceKeys = new HashMap&lt;&gt;();</span>
+
+    // Split up the locators by type, because we have to extract the value from the request
+    // different ways for different types
+
+<span class="fc" id="L125">    List&lt;KeyLocator&gt; systemLocators = locators.stream()</span>
+<span class="fc" id="L126">        .filter(l -&gt; l.getSource().equals(SYSTEM))</span>
+<span class="fc" id="L127">        .toList();</span>
+<span class="fc" id="L128">    List&lt;KeyLocator&gt; paramLocators = locators.stream()</span>
+<span class="fc" id="L129">        .filter(l -&gt; l.getSource().equals(PARAM))</span>
+<span class="fc" id="L130">        .toList();</span>
+<span class="fc" id="L131">    List&lt;KeyLocator&gt; payloadLocators = locators.stream()</span>
+<span class="fc" id="L132">        .filter(l -&gt; l.getSource().equals(PAYLOAD))</span>
+<span class="fc" id="L133">        .toList();</span>
+
+    // Add system-type keys, just metastore for now.
+<span class="fc" id="L136">    systemLocators.forEach(l -&gt; resourceKeys.put(l.getType(), &quot;metastore&quot;));</span>
+
+    // Extract the query/path parameter values just by grabbing them from the request
+<span class="fc" id="L139">    paramLocators.forEach(l -&gt; {</span>
+      String value = ctx.pathParam(l.getKey()) != null
+          ? ctx.pathParam(l.getKey())
+          : ctx.queryParam(l.getKey());
+      resourceKeys.put(l.getType(), value);
+    });
+
+<span class="fc bfc" id="L146" title="All 2 branches covered.">    if (payloadLocators.isEmpty()) {</span>
+      // If we don't have any PAYLOAD locators, we're ready to evaluate the authorization and allow
+      // or deny the request.
+<span class="fc" id="L149">      LOGGER.debug(&quot;Checking authorization before method.&quot;);</span>
+<span class="fc" id="L150">      checkAuthorization(principal, expression, resourceKeys);</span>
+
+<span class="fc" id="L152">      return delegate.serve(ctx, req);</span>
+    } else {
+      // Since we have PAYLOAD locators, we can only interrogate the payload while the request
+      // is being evaluated, via peekData()
+<span class="fc" id="L156">      LOGGER.debug(&quot;Checking authorization before in peekData.&quot;);</span>
+
+<span class="fc" id="L158">      PeekDataHandler peekDataHandler = new PeekDataHandler(</span>
+<span class="fc" id="L159">          req.contentType(),</span>
+          payloadLocators,
+          resourceKeys);
+
+      // Note that peekData only gets called for requests that actually have data (like PUT&amp;POST)
+
+<span class="fc" id="L165">      var peekReq = req.peekData(data -&gt; {</span>
+        LOGGER.debug(&quot;Authorization peekData invoked.&quot;);
+
+        if (peekDataHandler.processPeekData(data)) {
+          checkAuthorization(principal, expression, resourceKeys);
+        }
+      });
+
+<span class="fc" id="L173">      return delegate.serve(ctx, peekReq);</span>
+    }
+  }
+
+  private static Object findPayloadValue(String key, Map&lt;String, Object&gt; payload) {
+    // TODO: investigate better object traversal functionality
+<span class="fc" id="L179">    String[] args = key.split(&quot;[.]&quot;, 2);</span>
+<span class="pc bpc" id="L180" title="1 of 2 branches missed.">    if (args.length == 1) {</span>
+<span class="fc" id="L181">      return payload.get(args[0]);</span>
+    } else {
+<span class="nc bnc" id="L183" title="All 2 branches missed.">      if (payload.get(args[0]) instanceof Map) {</span>
+        @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L185">        Map&lt;String, Object&gt; value = (Map&lt;String, Object&gt;) payload.get(args[0]);</span>
+<span class="nc" id="L186">        return findPayloadValue(args[1], value);</span>
+      } else {
+<span class="nc" id="L188">        return null;</span>
+      }
+    }
+  }
+
+  private void checkAuthorization(
+      UUID principal,
+      String expression,
+      Map&lt;SecurableType, Object&gt; resourceKeys) {
+<span class="fc" id="L197">    LOGGER.debug(&quot;resourceKeys = {}&quot;, resourceKeys);</span>
+
+<span class="fc" id="L199">    Map&lt;SecurableType, Object&gt; resourceIds = keyMapper.mapResourceKeys(resourceKeys);</span>
+
+<span class="pc bpc" id="L201" title="1 of 2 branches missed.">    if (!resourceIds.keySet().containsAll(resourceKeys.keySet())) {</span>
+<span class="nc" id="L202">      LOGGER.warn(&quot;Some resource keys have unresolved ids.&quot;);</span>
+    }
+
+<span class="fc" id="L205">    LOGGER.debug(&quot;resourceIds = {}&quot;, resourceIds);</span>
+
+<span class="pc bpc" id="L207" title="1 of 2 branches missed.">    if (!evaluator.evaluate(principal, expression, resourceIds)) {</span>
+<span class="nc" id="L208">      throw new BaseException(ErrorCode.PERMISSION_DENIED, &quot;Access denied.&quot;);</span>
+    }
+<span class="fc" id="L210">  }</span>
+
+  private static String findAuthorizeExpression(Method method) {
+    // TODO: Cache this by method
+
+<span class="fc" id="L215">    AuthorizeExpression annotation = method.getAnnotation(AuthorizeExpression.class);</span>
+
+<span class="fc bfc" id="L217" title="All 2 branches covered.">    if (annotation != null) {</span>
+<span class="fc" id="L218">      LOGGER.debug(&quot;authorize expression = {}&quot;, annotation.value());</span>
+<span class="fc" id="L219">      return annotation.value();</span>
+    } else {
+<span class="fc" id="L221">      LOGGER.debug(&quot;authorize = (none found)&quot;);</span>
+<span class="fc" id="L222">      return null;</span>
+    }
+  }
+
+  private static List&lt;KeyLocator&gt; findAuthorizeKeys(Method method) {
+    // TODO: Cache this by method
+
+<span class="fc" id="L229">    List&lt;KeyLocator&gt; locators = new ArrayList&lt;&gt;();</span>
+
+<span class="fc" id="L231">    AuthorizeKey methodKey = method.getAnnotation(AuthorizeKey.class);</span>
+
+    // If resource is on the method, its source is from a global/system variable
+<span class="fc bfc" id="L234" title="All 2 branches covered.">    if (methodKey != null) {</span>
+<span class="fc" id="L235">      locators.add(KeyLocator.builder().source(SYSTEM).type(methodKey.value()).build());</span>
+    }
+
+<span class="fc bfc" id="L238" title="All 2 branches covered.">    for (Parameter parameter : method.getParameters()) {</span>
+<span class="fc" id="L239">      AuthorizeKey paramKey = parameter.getAnnotation(AuthorizeKey.class);</span>
+<span class="fc" id="L240">      AuthorizeKeys paramKeys = parameter.getAnnotation(AuthorizeKeys.class);</span>
+
+<span class="pc bpc" id="L242" title="1 of 4 branches missed.">      if (paramKey != null &amp;&amp; paramKeys != null) {</span>
+<span class="nc" id="L243">        LOGGER.warn(&quot;Both AuthorizeKey and AuthorizeKeys present&quot;);</span>
+      }
+
+<span class="fc" id="L246">      List&lt;AuthorizeKey&gt; allKeys = new ArrayList&lt;&gt;();</span>
+<span class="fc bfc" id="L247" title="All 2 branches covered.">      if (paramKey != null) {</span>
+<span class="fc" id="L248">        allKeys.add(paramKey);</span>
+      }
+<span class="fc bfc" id="L250" title="All 2 branches covered.">      if (paramKeys != null) {</span>
+<span class="fc" id="L251">        allKeys.addAll(Arrays.asList(paramKeys.value()));</span>
+      }
+
+<span class="fc bfc" id="L254" title="All 2 branches covered.">      for (AuthorizeKey key : allKeys) {</span>
+<span class="fc bfc" id="L255" title="All 2 branches covered.">        if (!key.key().isEmpty()) {</span>
+          // Explicitly declaring a key, so it's the source is from the payload data
+<span class="fc" id="L257">          locators.add(KeyLocator.builder()</span>
+<span class="fc" id="L258">              .source(PAYLOAD)</span>
+<span class="fc" id="L259">              .type(key.value())</span>
+<span class="fc" id="L260">              .key(key.key())</span>
+<span class="fc" id="L261">              .build());</span>
+        } else {
+          // No key defined so implicitly referencing an (annotated) (query) parameter
+<span class="fc" id="L264">          Param param = parameter.getAnnotation(Param.class);</span>
+<span class="pc bpc" id="L265" title="1 of 2 branches missed.">          if (param != null) {</span>
+<span class="fc" id="L266">            locators.add(KeyLocator.builder()</span>
+<span class="fc" id="L267">                .source(PARAM)</span>
+<span class="fc" id="L268">                .type(key.value())</span>
+<span class="fc" id="L269">                .key(param.value())</span>
+<span class="fc" id="L270">                .build());</span>
+          } else {
+<span class="nc" id="L272">            LOGGER.warn(&quot;Couldn't find param key for authorization key&quot;);</span>
+          }
+        }
+<span class="fc" id="L275">      }</span>
+    }
+<span class="fc" id="L277">    return locators;</span>
+  }
+
+  private static Method findServiceMethod(HttpService httpService) throws ClassNotFoundException {
+<span class="pc bpc" id="L281" title="1 of 2 branches missed.">    if (httpService.unwrap() instanceof SimpleDecoratingHttpService decoratingService</span>
+<span class="pc bpc" id="L282" title="1 of 2 branches missed.">        &amp;&amp; decoratingService.unwrap() instanceof AnnotatedService service) {</span>
+
+<span class="fc" id="L284">      LOGGER.debug(&quot;serviceName = {}, methodName = {}&quot;,</span>
+<span class="fc" id="L285">          service.serviceName(),</span>
+<span class="fc" id="L286">          service.methodName());</span>
+
+<span class="fc" id="L288">      Class&lt;?&gt; clazz = Class.forName(service.serviceName());</span>
+<span class="fc" id="L289">      List&lt;Method&gt; methods = findMethodsByName(clazz, service.methodName());</span>
+<span class="pc bpc" id="L290" title="1 of 2 branches missed.">      return (methods.size() == 1) ? methods.get(0) : null;</span>
+    } else {
+<span class="nc" id="L292">      return null;</span>
+    }
+  }
+
+  private static List&lt;Method&gt; findMethodsByName(Class&lt;?&gt; clazz, String methodName) {
+<span class="fc" id="L297">    List&lt;Method&gt; matchingMethods = new ArrayList&lt;&gt;();</span>
+<span class="fc" id="L298">    Method[] methods = clazz.getDeclaredMethods();</span>
+
+<span class="fc bfc" id="L300" title="All 2 branches covered.">    for (Method method : methods) {</span>
+<span class="fc bfc" id="L301" title="All 2 branches covered.">      if (method.getName().equals(methodName)) {</span>
+<span class="fc" id="L302">        matchingMethods.add(method);</span>
+      }
+    }
+
+<span class="fc" id="L306">    return matchingMethods;</span>
+  }
+
+  private static class PeekDataHandler {
+    // This is a little ugly - peekData provides only a block of data at a time, so lets
+    // buffer it up until we think its complete. A better long term solution would be to
+    // abandon this method and either integrate with Spring Boot to get full AOP support
+    // with aspect weaving, or build implement custom aspect weaving so we can intercept
+    // the method call directly and extract the payload data from the method arguments.
+
+    private final MediaType contentType;
+    private final List&lt;KeyLocator&gt; payloadLocators;
+    private final Map&lt;SecurableType, Object&gt; resourceKeys;
+<span class="fc" id="L319">    private final ByteArrayOutputStream dataStream = new ByteArrayOutputStream();</span>
+
+    private PeekDataHandler(
+        MediaType contentType,
+        List&lt;KeyLocator&gt; payloadLocators,
+<span class="fc" id="L324">        Map&lt;SecurableType, Object&gt; resourceKeys) {</span>
+<span class="fc" id="L325">      this.contentType = contentType;</span>
+<span class="fc" id="L326">      this.payloadLocators = payloadLocators;</span>
+<span class="fc" id="L327">      this.resourceKeys = resourceKeys;</span>
+<span class="fc" id="L328">    }</span>
+
+    private boolean processPeekData(HttpData data) {
+      // TODO: For now, we're going to assume JSON data, but might need to support other
+      // content types.
+<span class="pc bpc" id="L333" title="1 of 2 branches missed.">      if (contentType.equals(MediaType.JSON)) {</span>
+        try {
+<span class="fc" id="L335">          dataStream.write(data.array());</span>
+<span class="fc" id="L336">          LOGGER.debug(&quot;Payload: {}&quot;, dataStream.toString());</span>
+<span class="nc" id="L337">        } catch (IOException e) {</span>
+          // IGNORE
+<span class="fc" id="L339">        }</span>
+
+        // Unfortunately we don't appear to get a signal that we've got all the data, so we have to
+        // resort to attempting to parse the data whenever it _looks_ complete.
+        // TODO: try to optimize this using Jackson streaming or something else.
+<span class="pc bpc" id="L344" title="1 of 2 branches missed.">        if (data.array()[data.array().length - 1] == '}') {</span>
+          try {
+<span class="fc" id="L346">            Map&lt;String, Object&gt; payload = MAPPER.readValue(</span>
+<span class="fc" id="L347">                dataStream.toByteArray(),</span>
+<span class="fc" id="L348">                new TypeReference&lt;&gt;() {</span>
+                });
+
+<span class="fc" id="L351">            payloadLocators.forEach(l -&gt; resourceKeys.put(</span>
+                l.getType(),
+                findPayloadValue(l.getKey(), payload)));
+<span class="fc" id="L354">            return true;</span>
+<span class="nc" id="L355">          } catch (IOException e) {</span>
+            // This is probably because we read partial data.
+<span class="nc" id="L357">            LOGGER.warn(&quot;Error parsing payload: {}&quot;, e.getMessage());</span>
+<span class="nc" id="L358">          }</span>
+        }
+
+      } else {
+<span class="nc" id="L362">        LOGGER.warn(&quot;Skipping content-type: {}&quot;, contentType);</span>
+      }
+
+<span class="nc" id="L365">      return false;</span>
+    }
+  }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.7.202105040129</span></div></body></html>

@@ -1,0 +1,169 @@
+<?xml version="1.0" encoding="utf-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>FunctionInfoDAO.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=2;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Jacoco Coverage Report</a> &gt; <a href="index.source.html" class="el_package">io.unitycatalog.server.persist.dao</a> &gt; <span class="el_source">FunctionInfoDAO.java</span></div><h1>FunctionInfoDAO.java</h1><pre class="source lang-java linenums">package io.unitycatalog.server.persist.dao;
+
+import io.unitycatalog.server.model.ColumnTypeName;
+import io.unitycatalog.server.model.FunctionInfo;
+import jakarta.persistence.CascadeType;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.Lob;
+import jakarta.persistence.OneToMany;
+import jakarta.persistence.Table;
+import java.util.List;
+import java.util.UUID;
+import lombok.AllArgsConstructor;
+import lombok.EqualsAndHashCode;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import lombok.Setter;
+import lombok.experimental.SuperBuilder;
+import org.hibernate.annotations.SQLRestriction;
+
+// Hibernate annotations
+@Entity
+@Table(name = &quot;uc_functions&quot;)
+// Lombok annotations
+@Getter
+<span class="pc" id="L26">@Setter</span>
+<span class="fc" id="L27">@NoArgsConstructor</span>
+<span class="nc" id="L28">@AllArgsConstructor</span>
+<span class="nc bnc" id="L29" title="All 168 branches missed.">@EqualsAndHashCode(callSuper = true)</span>
+<span class="pc" id="L30">@SuperBuilder</span>
+public class FunctionInfoDAO extends IdentifiableDAO {
+  @Column(name = &quot;schema_id&quot;)
+<span class="nc" id="L33">  private UUID schemaId;</span>
+
+  @Column(name = &quot;comment&quot;, length = 65535)
+<span class="nc" id="L36">  private String comment;</span>
+
+  @Column(name = &quot;owner&quot;)
+<span class="nc" id="L39">  private String owner;</span>
+
+  @Column(name = &quot;created_at&quot;)
+<span class="nc" id="L42">  private Long createdAt;</span>
+
+  @Column(name = &quot;created_by&quot;)
+<span class="nc" id="L45">  private String createdBy;</span>
+
+  @Column(name = &quot;updated_at&quot;)
+<span class="nc" id="L48">  private Long updatedAt;</span>
+
+  @Column(name = &quot;updated_by&quot;)
+<span class="nc" id="L51">  private String updatedBy;</span>
+
+  @Column(name = &quot;data_type&quot;)
+<span class="nc" id="L54">  private ColumnTypeName dataType;</span>
+
+  @Column(name = &quot;full_data_type&quot;)
+<span class="nc" id="L57">  private String fullDataType;</span>
+
+  @Column(name = &quot;external_language&quot;)
+<span class="nc" id="L60">  private String externalLanguage;</span>
+
+  @Column(name = &quot;is_deterministic&quot;)
+<span class="nc" id="L63">  private Boolean isDeterministic;</span>
+
+  @Column(name = &quot;is_null_call&quot;)
+<span class="nc" id="L66">  private Boolean isNullCall;</span>
+
+  @Column(name = &quot;parameter_style&quot;)
+<span class="nc" id="L69">  private FunctionInfo.ParameterStyleEnum parameterStyle;</span>
+
+  @Column(name = &quot;routine_body&quot;)
+<span class="nc" id="L72">  private FunctionInfo.RoutineBodyEnum routineBody;</span>
+
+  @Lob
+  @Column(name = &quot;routine_definition&quot;, length = 16777215)
+<span class="nc" id="L76">  private String routineDefinition;</span>
+
+  @Column(name = &quot;sql_data_access&quot;)
+<span class="nc" id="L79">  private FunctionInfo.SqlDataAccessEnum sqlDataAccess;</span>
+
+  @Column(name = &quot;security_type&quot;)
+<span class="nc" id="L82">  private FunctionInfo.SecurityTypeEnum securityType;</span>
+
+  @Column(name = &quot;specific_name&quot;)
+<span class="nc" id="L85">  private String specificName;</span>
+
+  @OneToMany(mappedBy = &quot;function&quot;, cascade = CascadeType.ALL, orphanRemoval = true)
+  @SQLRestriction(&quot;input_or_return = 0&quot;)
+<span class="fc" id="L89">  private List&lt;FunctionParameterInfoDAO&gt; inputParams;</span>
+
+  @OneToMany(mappedBy = &quot;function&quot;, cascade = CascadeType.ALL, orphanRemoval = true)
+  @SQLRestriction(&quot;input_or_return = 1&quot;)
+<span class="fc" id="L93">  private List&lt;FunctionParameterInfoDAO&gt; returnParams;</span>
+
+  public static FunctionInfoDAO from(FunctionInfo functionInfo) {
+    FunctionInfoDAO functionInfoDAO =
+<span class="fc" id="L97">        FunctionInfoDAO.builder()</span>
+<span class="fc" id="L98">            .id(</span>
+<span class="pc bpc" id="L99" title="1 of 2 branches missed.">                functionInfo.getFunctionId() != null</span>
+<span class="fc" id="L100">                    ? UUID.fromString(functionInfo.getFunctionId())</span>
+<span class="nc" id="L101">                    : null)</span>
+<span class="fc" id="L102">            .name(functionInfo.getName())</span>
+<span class="fc" id="L103">            .comment(functionInfo.getComment())</span>
+<span class="fc" id="L104">            .owner(functionInfo.getOwner())</span>
+<span class="fc" id="L105">            .createdAt(functionInfo.getCreatedAt())</span>
+<span class="fc" id="L106">            .createdBy(functionInfo.getCreatedBy())</span>
+<span class="fc" id="L107">            .updatedAt(functionInfo.getUpdatedAt())</span>
+<span class="fc" id="L108">            .updatedBy(functionInfo.getUpdatedBy())</span>
+<span class="fc" id="L109">            .dataType(functionInfo.getDataType())</span>
+<span class="fc" id="L110">            .fullDataType(functionInfo.getFullDataType())</span>
+<span class="fc" id="L111">            .externalLanguage(functionInfo.getExternalLanguage())</span>
+<span class="fc" id="L112">            .isDeterministic(functionInfo.getIsDeterministic())</span>
+<span class="fc" id="L113">            .isNullCall(functionInfo.getIsNullCall())</span>
+<span class="fc" id="L114">            .parameterStyle(functionInfo.getParameterStyle())</span>
+<span class="fc" id="L115">            .routineBody(functionInfo.getRoutineBody())</span>
+<span class="fc" id="L116">            .routineDefinition(functionInfo.getRoutineDefinition())</span>
+<span class="fc" id="L117">            .sqlDataAccess(functionInfo.getSqlDataAccess())</span>
+<span class="fc" id="L118">            .securityType(functionInfo.getSecurityType())</span>
+<span class="fc" id="L119">            .specificName(functionInfo.getSpecificName())</span>
+<span class="fc" id="L120">            .inputParams(</span>
+<span class="fc" id="L121">                FunctionParameterInfoDAO.from(</span>
+<span class="fc" id="L122">                    functionInfo.getInputParams(),</span>
+                    FunctionParameterInfoDAO.InputOrReturnEnum.INPUT))
+<span class="fc" id="L124">            .returnParams(</span>
+<span class="fc" id="L125">                FunctionParameterInfoDAO.from(</span>
+<span class="fc" id="L126">                    functionInfo.getReturnParams(),</span>
+                    FunctionParameterInfoDAO.InputOrReturnEnum.RETURN))
+<span class="fc" id="L128">            .build();</span>
+<span class="fc bfc" id="L129" title="All 2 branches covered.">    for (FunctionParameterInfoDAO inputParam : functionInfoDAO.inputParams) {</span>
+<span class="fc" id="L130">      inputParam.setFunction(functionInfoDAO);</span>
+<span class="fc" id="L131">    }</span>
+<span class="pc bpc" id="L132" title="1 of 2 branches missed.">    for (FunctionParameterInfoDAO returnParam : functionInfoDAO.returnParams) {</span>
+<span class="nc" id="L133">      returnParam.setFunction(functionInfoDAO);</span>
+<span class="nc" id="L134">    }</span>
+<span class="fc" id="L135">    return functionInfoDAO;</span>
+  }
+
+  public FunctionInfo toFunctionInfo() {
+<span class="fc" id="L139">    FunctionInfo functionInfo =</span>
+        new FunctionInfo()
+<span class="fc" id="L141">            .functionId(getId().toString())</span>
+<span class="fc" id="L142">            .name(getName())</span>
+<span class="fc" id="L143">            .comment(comment)</span>
+<span class="fc" id="L144">            .owner(owner)</span>
+<span class="fc" id="L145">            .createdAt(createdAt)</span>
+<span class="fc" id="L146">            .createdBy(createdBy)</span>
+<span class="fc" id="L147">            .updatedAt(updatedAt)</span>
+<span class="fc" id="L148">            .updatedBy(updatedBy)</span>
+<span class="fc" id="L149">            .dataType(dataType)</span>
+<span class="fc" id="L150">            .fullDataType(fullDataType)</span>
+<span class="fc" id="L151">            .externalLanguage(externalLanguage)</span>
+<span class="fc" id="L152">            .isDeterministic(isDeterministic)</span>
+<span class="fc" id="L153">            .isNullCall(isNullCall)</span>
+<span class="fc" id="L154">            .parameterStyle(parameterStyle)</span>
+<span class="fc" id="L155">            .routineBody(routineBody)</span>
+<span class="fc" id="L156">            .routineDefinition(routineDefinition)</span>
+<span class="fc" id="L157">            .sqlDataAccess(sqlDataAccess)</span>
+<span class="fc" id="L158">            .securityType(securityType)</span>
+<span class="fc" id="L159">            .specificName(specificName);</span>
+<span class="pc bpc" id="L160" title="1 of 2 branches missed.">    if (!inputParams.isEmpty()) {</span>
+<span class="fc" id="L161">      functionInfo.inputParams(FunctionParameterInfoDAO.toFunctionParameterInfos(inputParams));</span>
+    }
+<span class="pc bpc" id="L163" title="1 of 2 branches missed.">    if (!returnParams.isEmpty()) {</span>
+<span class="nc" id="L164">      functionInfo.returnParams(FunctionParameterInfoDAO.toFunctionParameterInfos(returnParams));</span>
+    }
+<span class="fc" id="L166">    return functionInfo;</span>
+  }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.7.202105040129</span></div></body></html>

@@ -1,0 +1,420 @@
+<?xml version="1.0" encoding="utf-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>SchemaRepository.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=2;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Jacoco Coverage Report</a> &gt; <a href="index.source.html" class="el_package">io.unitycatalog.server.persist</a> &gt; <span class="el_source">SchemaRepository.java</span></div><h1>SchemaRepository.java</h1><pre class="source lang-java linenums">package io.unitycatalog.server.persist;
+
+import io.unitycatalog.server.exception.BaseException;
+import io.unitycatalog.server.exception.ErrorCode;
+import io.unitycatalog.server.model.CreateSchema;
+import io.unitycatalog.server.model.FunctionInfo;
+import io.unitycatalog.server.model.ListFunctionsResponse;
+import io.unitycatalog.server.model.ListRegisteredModelsResponse;
+import io.unitycatalog.server.model.ListSchemasResponse;
+import io.unitycatalog.server.model.ListTablesResponse;
+import io.unitycatalog.server.model.ListVolumesResponseContent;
+import io.unitycatalog.server.model.RegisteredModelInfo;
+import io.unitycatalog.server.model.SchemaInfo;
+import io.unitycatalog.server.model.TableInfo;
+import io.unitycatalog.server.model.UpdateSchema;
+import io.unitycatalog.server.model.VolumeInfo;
+import io.unitycatalog.server.persist.dao.CatalogInfoDAO;
+import io.unitycatalog.server.persist.dao.PropertyDAO;
+import io.unitycatalog.server.persist.dao.SchemaInfoDAO;
+import io.unitycatalog.server.persist.utils.PagedListingHelper;
+import io.unitycatalog.server.persist.utils.RepositoryUtils;
+import io.unitycatalog.server.persist.utils.TransactionManager;
+import io.unitycatalog.server.utils.Constants;
+import io.unitycatalog.server.utils.IdentityUtils;
+import io.unitycatalog.server.utils.ValidationUtils;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+import org.hibernate.Session;
+import org.hibernate.SessionFactory;
+import org.hibernate.query.Query;
+
+public class SchemaRepository {
+  private final Repositories repositories;
+  private final SessionFactory sessionFactory;
+<span class="fc" id="L38">  private static final PagedListingHelper&lt;SchemaInfoDAO&gt; LISTING_HELPER =</span>
+      new PagedListingHelper&lt;&gt;(SchemaInfoDAO.class);
+
+<span class="fc" id="L41">  public SchemaRepository(Repositories repositories, SessionFactory sessionFactory) {</span>
+<span class="fc" id="L42">    this.repositories = repositories;</span>
+<span class="fc" id="L43">    this.sessionFactory = sessionFactory;</span>
+<span class="fc" id="L44">  }</span>
+
+  public SchemaInfo createSchema(CreateSchema createSchema) {
+<span class="fc" id="L47">    ValidationUtils.validateSqlObjectName(createSchema.getName());</span>
+<span class="fc" id="L48">    String callerId = IdentityUtils.findPrincipalEmailAddress();</span>
+
+<span class="fc" id="L50">    return TransactionManager.executeWithTransaction(</span>
+        sessionFactory,
+        session -&gt; {
+          if (getSchemaDAO(session, createSchema.getCatalogName(), createSchema.getName())
+              != null) {
+            throw new BaseException(
+                ErrorCode.ALREADY_EXISTS, &quot;Schema already exists: &quot; + createSchema.getName());
+          }
+          CatalogInfoDAO catalogDAO =
+              repositories
+                  .getCatalogRepository()
+                  .getCatalogDAO(session, createSchema.getCatalogName());
+          Long createTime = System.currentTimeMillis();
+          SchemaInfo schemaInfo =
+              new SchemaInfo()
+                  .schemaId(UUID.randomUUID().toString())
+                  .name(createSchema.getName())
+                  .catalogName(createSchema.getCatalogName())
+                  .comment(createSchema.getComment())
+                  .owner(callerId)
+                  .createdAt(createTime)
+                  .createdBy(callerId)
+                  .updatedAt(createTime)
+                  .updatedBy(callerId)
+                  .properties(createSchema.getProperties());
+          SchemaInfoDAO schemaInfoDAO = SchemaInfoDAO.from(schemaInfo);
+          schemaInfoDAO.setCatalogId(catalogDAO.getId());
+          PropertyDAO.from(schemaInfo.getProperties(), schemaInfoDAO.getId(), Constants.SCHEMA)
+              .forEach(session::persist);
+          session.persist(schemaInfoDAO);
+          addNamespaceData(schemaInfo, createSchema.getCatalogName());
+          return schemaInfo;
+        },
+        &quot;Failed to create schema&quot;,
+        /* readOnly = */ false);
+  }
+
+  private void addNamespaceData(SchemaInfo schemaInfo, String catalogName) {
+<span class="fc" id="L88">    schemaInfo.setCatalogName(catalogName);</span>
+<span class="fc" id="L89">    schemaInfo.setFullName(catalogName + &quot;.&quot; + schemaInfo.getName());</span>
+<span class="fc" id="L90">  }</span>
+
+  private SchemaInfo convertFromDAO(Session session, SchemaInfoDAO schemaInfoDAO, String fullName) {
+<span class="fc" id="L93">    String catalogName = fullName.split(&quot;\\.&quot;)[0];</span>
+<span class="fc" id="L94">    SchemaInfo schemaInfo = schemaInfoDAO.toSchemaInfo();</span>
+<span class="fc" id="L95">    addNamespaceData(schemaInfo, catalogName);</span>
+<span class="fc" id="L96">    return RepositoryUtils.attachProperties(</span>
+<span class="fc" id="L97">        schemaInfo, schemaInfo.getSchemaId(), Constants.SCHEMA, session);</span>
+  }
+
+  public SchemaInfoDAO getSchemaDAO(Session session, UUID catalogId, String schemaName) {
+<span class="fc" id="L101">    Query&lt;SchemaInfoDAO&gt; query =</span>
+<span class="fc" id="L102">        session.createQuery(</span>
+            &quot;FROM SchemaInfoDAO WHERE name = :name and catalogId = :catalogId&quot;,
+            SchemaInfoDAO.class);
+<span class="fc" id="L105">    query.setParameter(&quot;name&quot;, schemaName);</span>
+<span class="fc" id="L106">    query.setParameter(&quot;catalogId&quot;, catalogId);</span>
+<span class="fc" id="L107">    query.setMaxResults(1);</span>
+<span class="fc" id="L108">    return query.uniqueResult();</span>
+  }
+
+  public UUID getSchemaId(Session session, String catalogName, String schemaName) {
+<span class="fc" id="L112">    SchemaInfoDAO schemaInfo = getSchemaDAO(session, catalogName, schemaName);</span>
+<span class="fc bfc" id="L113" title="All 2 branches covered.">    if (schemaInfo == null) {</span>
+<span class="fc" id="L114">      throw new BaseException(ErrorCode.NOT_FOUND, &quot;Schema not found: &quot; + schemaName);</span>
+    }
+<span class="fc" id="L116">    return schemaInfo.getId();</span>
+  }
+
+  public SchemaInfoDAO getSchemaDAO(Session session, String catalogName, String schemaName) {
+<span class="fc" id="L120">    CatalogInfoDAO catalog =</span>
+<span class="fc" id="L121">        repositories.getCatalogRepository().getCatalogDAO(session, catalogName);</span>
+<span class="fc bfc" id="L122" title="All 2 branches covered.">    if (catalog == null) {</span>
+<span class="fc" id="L123">      throw new BaseException(ErrorCode.NOT_FOUND, &quot;Catalog not found: &quot; + catalogName);</span>
+    }
+<span class="fc" id="L125">    return getSchemaDAO(session, catalog.getId(), schemaName);</span>
+  }
+
+  public SchemaInfoDAO getSchemaDAO(Session session, String fullName) {
+<span class="fc" id="L129">    String[] namespace = fullName.split(&quot;\\.&quot;);</span>
+<span class="fc" id="L130">    return getSchemaDAO(session, namespace[0], namespace[1]);</span>
+  }
+
+  /**
+   * Return the list of schemas in ascending order of schema name.
+   *
+   * @param catalogName
+   * @param maxResults
+   * @param pageToken
+   * @return
+   */
+  public ListSchemasResponse listSchemas(
+      String catalogName, Optional&lt;Integer&gt; maxResults, Optional&lt;String&gt; pageToken) {
+<span class="fc" id="L143">    return TransactionManager.executeWithTransaction(</span>
+        sessionFactory,
+        session -&gt; {
+          UUID catalogId = repositories.getCatalogRepository().getCatalogId(session, catalogName);
+          return listSchemas(session, catalogId, catalogName, maxResults, pageToken);
+        },
+        &quot;Failed to list schemas&quot;,
+        /* readOnly = */ true);
+  }
+
+  public ListSchemasResponse listSchemas(
+      Session session,
+      UUID catalogId,
+      String catalogName,
+      Optional&lt;Integer&gt; maxResults,
+      Optional&lt;String&gt; pageToken) {
+<span class="fc" id="L159">    List&lt;SchemaInfoDAO&gt; schemaInfoDAOList =</span>
+<span class="fc" id="L160">        LISTING_HELPER.listEntity(session, maxResults, pageToken, catalogId);</span>
+<span class="fc" id="L161">    String nextPageToken = LISTING_HELPER.getNextPageToken(schemaInfoDAOList, maxResults);</span>
+<span class="fc" id="L162">    List&lt;SchemaInfo&gt; result = new ArrayList&lt;&gt;();</span>
+<span class="fc bfc" id="L163" title="All 2 branches covered.">    for (SchemaInfoDAO schemaInfoDAO : schemaInfoDAOList) {</span>
+<span class="fc" id="L164">      SchemaInfo schemaInfo = schemaInfoDAO.toSchemaInfo();</span>
+<span class="fc" id="L165">      RepositoryUtils.attachProperties(</span>
+<span class="fc" id="L166">          schemaInfo, schemaInfo.getSchemaId(), Constants.SCHEMA, session);</span>
+<span class="fc" id="L167">      addNamespaceData(schemaInfo, catalogName);</span>
+<span class="fc" id="L168">      result.add(schemaInfo);</span>
+<span class="fc" id="L169">    }</span>
+<span class="fc" id="L170">    return new ListSchemasResponse().schemas(result).nextPageToken(nextPageToken);</span>
+  }
+
+  public SchemaInfo getSchema(String fullName) {
+<span class="fc" id="L174">    return TransactionManager.executeWithTransaction(</span>
+        sessionFactory,
+        session -&gt; {
+          SchemaInfoDAO schemaInfoDAO = getSchemaDAO(session, fullName);
+          if (schemaInfoDAO == null) {
+            throw new BaseException(ErrorCode.NOT_FOUND, &quot;Schema not found: &quot; + fullName);
+          }
+          SchemaInfo schemaInfo = convertFromDAO(session, schemaInfoDAO, fullName);
+          return RepositoryUtils.attachProperties(
+              schemaInfo, schemaInfo.getSchemaId(), Constants.SCHEMA, session);
+        },
+        &quot;Failed to get schema&quot;,
+        /* readOnly = */ true);
+  }
+
+  public SchemaInfo updateSchema(String fullName, UpdateSchema updateSchema) {
+<span class="fc bfc" id="L190" title="All 2 branches covered.">    if (updateSchema.getNewName() != null) {</span>
+<span class="fc" id="L191">      ValidationUtils.validateSqlObjectName(updateSchema.getNewName());</span>
+    }
+<span class="fc" id="L193">    String callerId = IdentityUtils.findPrincipalEmailAddress();</span>
+
+<span class="fc" id="L195">    return TransactionManager.executeWithTransaction(</span>
+        sessionFactory,
+        session -&gt; {
+          SchemaInfoDAO schemaInfoDAO = getSchemaDAO(session, fullName);
+          if (schemaInfoDAO == null) {
+            throw new BaseException(ErrorCode.NOT_FOUND, &quot;Schema not found: &quot; + fullName);
+          }
+          if (updateSchema.getNewName() != null) {
+            if (getSchemaDAO(session, fullName.split(&quot;\\.&quot;)[0], updateSchema.getNewName())
+                != null) {
+              throw new BaseException(
+                  ErrorCode.ALREADY_EXISTS, &quot;Schema already exists: &quot; + updateSchema.getNewName());
+            }
+          }
+          if (updateSchema.getComment() == null
+              &amp;&amp; updateSchema.getNewName() == null
+              &amp;&amp; (updateSchema.getProperties() == null || updateSchema.getProperties().isEmpty())) {
+            return convertFromDAO(session, schemaInfoDAO, fullName);
+          }
+          // Update the schema with new values
+          if (updateSchema.getComment() != null) {
+            schemaInfoDAO.setComment(updateSchema.getComment());
+          }
+          if (updateSchema.getNewName() != null) {
+            schemaInfoDAO.setName(updateSchema.getNewName());
+          }
+          if (updateSchema.getProperties() != null &amp;&amp; !updateSchema.getProperties().isEmpty()) {
+            PropertyRepository.findProperties(session, schemaInfoDAO.getId(), Constants.SCHEMA)
+                .forEach(session::remove);
+            session.flush();
+            PropertyDAO.from(updateSchema.getProperties(), schemaInfoDAO.getId(), Constants.SCHEMA)
+                .forEach(session::persist);
+          }
+          schemaInfoDAO.setUpdatedAt(new Date());
+          schemaInfoDAO.setUpdatedBy(callerId);
+          session.merge(schemaInfoDAO);
+          return convertFromDAO(session, schemaInfoDAO, fullName);
+        },
+        &quot;Failed to update schema&quot;,
+        /* readOnly = */ false);
+  }
+
+  public void deleteSchema(String fullName, boolean force) {
+<span class="fc" id="L238">    TransactionManager.executeWithTransaction(</span>
+        sessionFactory,
+        session -&gt; {
+          String[] namespace = fullName.split(&quot;\\.&quot;);
+          if (namespace.length != 2) {
+            throw new BaseException(ErrorCode.INVALID_ARGUMENT, &quot;Invalid schema name: &quot; + fullName);
+          }
+          CatalogInfoDAO catalog =
+              repositories.getCatalogRepository().getCatalogDAO(session, namespace[0]);
+          if (catalog == null) {
+            throw new BaseException(ErrorCode.NOT_FOUND, &quot;Catalog not found: &quot; + namespace[0]);
+          }
+          deleteSchema(session, catalog.getId(), namespace[0], namespace[1], force);
+          return null;
+        },
+        &quot;Failed to delete schema&quot;,
+        /* readOnly = */ false);
+<span class="fc" id="L255">  }</span>
+
+  public void processChildTables(
+      Session session, UUID schemaId, String catalogName, String schemaName, boolean force) {
+    // first check if there are any child tables
+<span class="fc" id="L260">    List&lt;TableInfo&gt; tables =</span>
+        repositories
+<span class="fc" id="L262">            .getTableRepository()</span>
+<span class="fc" id="L263">            .listTables(</span>
+                session,
+                schemaId,
+                catalogName,
+                schemaName,
+<span class="fc" id="L268">                Optional.of(1),</span>
+<span class="fc" id="L269">                Optional.empty(),</span>
+<span class="fc" id="L270">                true,</span>
+<span class="fc" id="L271">                true)</span>
+<span class="fc" id="L272">            .getTables();</span>
+<span class="pc bpc" id="L273" title="1 of 4 branches missed.">    if (tables != null &amp;&amp; !tables.isEmpty()) {</span>
+<span class="fc bfc" id="L274" title="All 2 branches covered.">      if (!force) {</span>
+<span class="fc" id="L275">        throw new BaseException(ErrorCode.FAILED_PRECONDITION, &quot;Cannot delete schema with tables&quot;);</span>
+      }
+<span class="fc" id="L277">      String nextToken = null;</span>
+      do {
+<span class="fc" id="L279">        ListTablesResponse listTablesResponse =</span>
+            repositories
+<span class="fc" id="L281">                .getTableRepository()</span>
+<span class="fc" id="L282">                .listTables(</span>
+                    session,
+                    schemaId,
+                    catalogName,
+                    schemaName,
+<span class="fc" id="L287">                    Optional.empty(),</span>
+<span class="fc" id="L288">                    Optional.ofNullable(nextToken),</span>
+<span class="fc" id="L289">                    true,</span>
+<span class="fc" id="L290">                    true);</span>
+<span class="fc bfc" id="L291" title="All 2 branches covered.">        for (TableInfo tableInfo : listTablesResponse.getTables()) {</span>
+<span class="fc" id="L292">          repositories.getTableRepository().deleteTable(session, schemaId, tableInfo.getName());</span>
+<span class="fc" id="L293">        }</span>
+<span class="fc" id="L294">        nextToken = listTablesResponse.getNextPageToken();</span>
+<span class="pc bpc" id="L295" title="1 of 2 branches missed.">      } while (nextToken != null);</span>
+    }
+<span class="fc" id="L297">  }</span>
+
+  public void processChildVolumes(
+      Session session, UUID schemaId, String catalogName, String schemaName, boolean force) {
+    // first check if there are any child volumes
+<span class="fc" id="L302">    List&lt;VolumeInfo&gt; volumes =</span>
+        repositories
+<span class="fc" id="L304">            .getVolumeRepository()</span>
+<span class="fc" id="L305">            .listVolumes(</span>
+<span class="fc" id="L306">                session, schemaId, catalogName, schemaName, Optional.of(1), Optional.empty())</span>
+<span class="fc" id="L307">            .getVolumes();</span>
+<span class="pc bpc" id="L308" title="1 of 4 branches missed.">    if (volumes != null &amp;&amp; !volumes.isEmpty()) {</span>
+<span class="fc bfc" id="L309" title="All 2 branches covered.">      if (!force) {</span>
+<span class="fc" id="L310">        throw new BaseException(ErrorCode.FAILED_PRECONDITION, &quot;Cannot delete schema with volumes&quot;);</span>
+      }
+<span class="fc" id="L312">      String nextToken = null;</span>
+      do {
+<span class="fc" id="L314">        ListVolumesResponseContent listVolumesResponse =</span>
+            repositories
+<span class="fc" id="L316">                .getVolumeRepository()</span>
+<span class="fc" id="L317">                .listVolumes(</span>
+                    session,
+                    schemaId,
+                    catalogName,
+                    schemaName,
+<span class="fc" id="L322">                    Optional.empty(),</span>
+<span class="fc" id="L323">                    Optional.ofNullable(nextToken));</span>
+<span class="fc bfc" id="L324" title="All 2 branches covered.">        for (VolumeInfo volumeInfo : listVolumesResponse.getVolumes()) {</span>
+<span class="fc" id="L325">          repositories.getVolumeRepository().deleteVolume(session, schemaId, volumeInfo.getName());</span>
+<span class="fc" id="L326">        }</span>
+<span class="fc" id="L327">        nextToken = listVolumesResponse.getNextPageToken();</span>
+<span class="pc bpc" id="L328" title="1 of 2 branches missed.">      } while (nextToken != null);</span>
+    }
+<span class="fc" id="L330">  }</span>
+
+  public void processChildFunctions(
+      Session session, UUID schemaId, String catalogName, String schemaName, boolean force) {
+    // first check if there are any child functions
+<span class="fc" id="L335">    List&lt;FunctionInfo&gt; functions =</span>
+        repositories
+<span class="fc" id="L337">            .getFunctionRepository()</span>
+<span class="fc" id="L338">            .listFunctions(</span>
+<span class="fc" id="L339">                session, schemaId, catalogName, schemaName, Optional.of(1), Optional.empty())</span>
+<span class="fc" id="L340">            .getFunctions();</span>
+<span class="pc bpc" id="L341" title="1 of 4 branches missed.">    if (functions != null &amp;&amp; !functions.isEmpty()) {</span>
+<span class="pc bpc" id="L342" title="1 of 2 branches missed.">      if (!force) {</span>
+<span class="nc" id="L343">        throw new BaseException(</span>
+            ErrorCode.FAILED_PRECONDITION, &quot;Cannot delete schema with functions&quot;);
+      }
+<span class="fc" id="L346">      String nextToken = null;</span>
+      do {
+<span class="fc" id="L348">        ListFunctionsResponse listFunctionsResponse =</span>
+            repositories
+<span class="fc" id="L350">                .getFunctionRepository()</span>
+<span class="fc" id="L351">                .listFunctions(</span>
+                    session,
+                    schemaId,
+                    catalogName,
+                    schemaName,
+<span class="fc" id="L356">                    Optional.empty(),</span>
+<span class="fc" id="L357">                    Optional.ofNullable(nextToken));</span>
+<span class="fc bfc" id="L358" title="All 2 branches covered.">        for (FunctionInfo functionInfo : listFunctionsResponse.getFunctions()) {</span>
+<span class="fc" id="L359">          repositories</span>
+<span class="fc" id="L360">              .getFunctionRepository()</span>
+<span class="fc" id="L361">              .deleteFunction(session, schemaId, functionInfo.getName());</span>
+<span class="fc" id="L362">        }</span>
+<span class="fc" id="L363">        nextToken = listFunctionsResponse.getNextPageToken();</span>
+<span class="pc bpc" id="L364" title="1 of 2 branches missed.">      } while (nextToken != null);</span>
+    }
+<span class="fc" id="L366">  }</span>
+
+  public void processChildModels(
+      Session session, UUID schemaId, String catalogName, String schemaName, boolean force) {
+    // first check if there are any child Models
+<span class="fc" id="L371">    List&lt;RegisteredModelInfo&gt; registeredModels =</span>
+        repositories
+<span class="fc" id="L373">            .getModelRepository()</span>
+<span class="fc" id="L374">            .listRegisteredModels(</span>
+<span class="fc" id="L375">                session, schemaId, catalogName, schemaName, Optional.of(1), Optional.empty())</span>
+<span class="fc" id="L376">            .getRegisteredModels();</span>
+<span class="pc bpc" id="L377" title="1 of 4 branches missed.">    if (registeredModels != null &amp;&amp; !registeredModels.isEmpty()) {</span>
+<span class="pc bpc" id="L378" title="1 of 2 branches missed.">      if (!force) {</span>
+<span class="nc" id="L379">        throw new BaseException(ErrorCode.FAILED_PRECONDITION, &quot;Cannot delete schema with models&quot;);</span>
+      }
+<span class="fc" id="L381">      String nextToken = null;</span>
+      do {
+<span class="fc" id="L383">        ListRegisteredModelsResponse listRegisteredModelsResponse =</span>
+            repositories
+<span class="fc" id="L385">                .getModelRepository()</span>
+<span class="fc" id="L386">                .listRegisteredModels(</span>
+                    session,
+                    schemaId,
+                    catalogName,
+                    schemaName,
+<span class="fc" id="L391">                    Optional.empty(),</span>
+<span class="fc" id="L392">                    Optional.ofNullable(nextToken));</span>
+        for (RegisteredModelInfo registeredModelInfo :
+<span class="fc bfc" id="L394" title="All 2 branches covered.">            listRegisteredModelsResponse.getRegisteredModels()) {</span>
+<span class="fc" id="L395">          repositories</span>
+<span class="fc" id="L396">              .getModelRepository()</span>
+<span class="fc" id="L397">              .deleteRegisteredModel(session, schemaId, registeredModelInfo.getName(), true);</span>
+<span class="fc" id="L398">        }</span>
+<span class="fc" id="L399">        nextToken = listRegisteredModelsResponse.getNextPageToken();</span>
+<span class="pc bpc" id="L400" title="1 of 2 branches missed.">      } while (nextToken != null);</span>
+    }
+<span class="fc" id="L402">  }</span>
+
+  public void deleteSchema(
+      Session session, UUID catalogId, String catalogName, String schemaName, boolean force) {
+<span class="fc" id="L406">    SchemaInfoDAO schemaInfo = getSchemaDAO(session, catalogId, schemaName);</span>
+<span class="pc bpc" id="L407" title="1 of 2 branches missed.">    if (schemaInfo != null) {</span>
+<span class="fc" id="L408">      processChildTables(session, schemaInfo.getId(), catalogName, schemaName, force);</span>
+<span class="fc" id="L409">      processChildVolumes(session, schemaInfo.getId(), catalogName, schemaName, force);</span>
+<span class="fc" id="L410">      processChildFunctions(session, schemaInfo.getId(), catalogName, schemaName, force);</span>
+<span class="fc" id="L411">      processChildModels(session, schemaInfo.getId(), catalogName, schemaName, force);</span>
+<span class="fc" id="L412">      session.remove(schemaInfo);</span>
+<span class="fc" id="L413">      PropertyRepository.findProperties(session, schemaInfo.getId(), Constants.SCHEMA)</span>
+<span class="fc" id="L414">          .forEach(session::remove);</span>
+    } else {
+<span class="nc" id="L416">      throw new BaseException(ErrorCode.NOT_FOUND, &quot;Schema not found: &quot; + schemaName);</span>
+    }
+<span class="fc" id="L418">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.7.202105040129</span></div></body></html>

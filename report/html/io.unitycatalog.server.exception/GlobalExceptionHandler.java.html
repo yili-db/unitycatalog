@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>GlobalExceptionHandler.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=2;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Jacoco Coverage Report</a> &gt; <a href="index.source.html" class="el_package">io.unitycatalog.server.exception</a> &gt; <span class="el_source">GlobalExceptionHandler.java</span></div><h1>GlobalExceptionHandler.java</h1><pre class="source lang-java linenums">package io.unitycatalog.server.exception;
+
+import com.linecorp.armeria.common.HttpRequest;
+import com.linecorp.armeria.common.HttpResponse;
+import com.linecorp.armeria.common.HttpStatus;
+import com.linecorp.armeria.server.ServiceRequestContext;
+import com.linecorp.armeria.server.annotation.ExceptionHandlerFunction;
+import com.unboundid.scim2.common.exceptions.ScimException;
+import io.unitycatalog.server.utils.RESTObjectMapper;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import lombok.SneakyThrows;
+
+<span class="fc" id="L16">public class GlobalExceptionHandler implements ExceptionHandlerFunction {</span>
+<span class="fc" id="L17">  @SneakyThrows</span>
+  @Override
+  public HttpResponse handleException(ServiceRequestContext ctx, HttpRequest req, Throwable cause) {
+<span class="fc bfc" id="L20" title="All 2 branches covered.">    if (cause instanceof BaseException) {</span>
+<span class="fc" id="L21">      BaseException baseException = (BaseException) cause;</span>
+<span class="fc" id="L22">      return HttpResponse.ofJson(</span>
+<span class="fc" id="L23">          baseException.getErrorCode().getHttpStatus(),</span>
+<span class="fc" id="L24">          createErrorResponse(</span>
+<span class="fc" id="L25">              baseException.getErrorCode(),</span>
+<span class="fc" id="L26">              baseException.getErrorMessage(),</span>
+<span class="fc" id="L27">              baseException.getCause(),</span>
+<span class="fc" id="L28">              baseException.getMetadata()));</span>
+<span class="pc bpc" id="L29" title="1 of 2 branches missed.">    } else if (cause instanceof Scim2RuntimeException) {</span>
+<span class="nc" id="L30">      ScimException scimException = (ScimException) cause.getCause();</span>
+<span class="nc" id="L31">      return HttpResponse.ofJson(</span>
+          HttpStatus.INTERNAL_SERVER_ERROR,
+<span class="nc" id="L33">          RESTObjectMapper.mapper().writeValueAsString(scimException.getScimError()));</span>
+<span class="fc bfc" id="L34" title="All 2 branches covered.">    } else if (cause instanceof RuntimeException) {</span>
+<span class="fc" id="L35">      return HttpResponse.ofJson(</span>
+          HttpStatus.INTERNAL_SERVER_ERROR,
+<span class="fc" id="L37">          createErrorResponse(ErrorCode.INTERNAL, cause.getMessage(), cause, new HashMap&lt;&gt;()));</span>
+    }
+<span class="nc" id="L39">    return ExceptionHandlerFunction.fallthrough();</span>
+  }
+
+  private Map&lt;String, Object&gt; createErrorResponse(
+      ErrorCode errorCode, String message, Throwable cause, Map&lt;String, String&gt; metadata) {
+<span class="fc" id="L44">    Map&lt;String, Object&gt; response = new HashMap&lt;&gt;();</span>
+<span class="fc" id="L45">    response.put(&quot;error_code&quot;, errorCode.name());</span>
+<span class="fc" id="L46">    response.put(&quot;message&quot;, message);</span>
+<span class="fc bfc" id="L47" title="All 2 branches covered.">    response.put(&quot;stack_trace&quot;, cause != null ? Arrays.toString(cause.getStackTrace()) : null);</span>
+
+<span class="fc" id="L49">    Map&lt;String, Object&gt; details = new HashMap&lt;&gt;();</span>
+<span class="fc" id="L50">    details.put(&quot;@type&quot;, &quot;google.rpc.ErrorInfo&quot;);</span>
+<span class="fc" id="L51">    details.put(&quot;reason&quot;, errorCode.name());</span>
+<span class="fc" id="L52">    details.put(&quot;metadata&quot;, metadata);</span>
+<span class="fc" id="L53">    response.put(&quot;details&quot;, List.of(details));</span>
+
+<span class="fc" id="L55">    return response;</span>
+  }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.7.202105040129</span></div></body></html>

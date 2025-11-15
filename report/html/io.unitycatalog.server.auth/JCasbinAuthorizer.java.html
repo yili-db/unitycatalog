@@ -1,0 +1,143 @@
+<?xml version="1.0" encoding="utf-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>JCasbinAuthorizer.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=2;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Jacoco Coverage Report</a> &gt; <a href="index.source.html" class="el_package">io.unitycatalog.server.auth</a> &gt; <span class="el_source">JCasbinAuthorizer.java</span></div><h1>JCasbinAuthorizer.java</h1><pre class="source lang-java linenums">package io.unitycatalog.server.auth;
+
+import io.unitycatalog.server.persist.model.Privileges;
+import io.unitycatalog.server.persist.utils.HibernateConfigurator;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Map;
+import java.util.Properties;
+import java.util.UUID;
+import java.util.stream.Collectors;
+import org.apache.commons.io.IOUtils;
+import org.casbin.adapter.JDBCAdapter;
+import org.casbin.jcasbin.main.Enforcer;
+import org.casbin.jcasbin.model.Model;
+
+/**
+ * An authorizer that uses the JCasbin library to enforce access control policies.
+ *
+ * &lt;p&gt;This class is an implementation of UnityCatalogAuthorizor that uses JCasbin as the back end to
+ * both store and enforce access control policies.
+ *
+ * &lt;p&gt;The implementation stores the policies in a database using the JDBCAdapter class.
+ */
+public class JCasbinAuthorizer implements UnityCatalogAuthorizer {
+  private final Enforcer enforcer;
+
+  private static final int PRINCIPAL_INDEX = 0;
+  private static final int RESOURCE_INDEX = 1;
+  private static final int PRIVILEGE_INDEX = 2;
+
+  private static final String HIERARCHY_POLICY = &quot;g2&quot;;
+  private static final int HIERARCHY_PARENT_INDEX = 0;
+  private static final int HIERARCHY_CHILD_INDEX = 1;
+
+<span class="fc" id="L37">  public JCasbinAuthorizer(HibernateConfigurator hibernateConfigurator) throws Exception {</span>
+<span class="fc" id="L38">    Properties properties = hibernateConfigurator.getHibernateProperties();</span>
+<span class="fc" id="L39">    String driver = properties.getProperty(&quot;hibernate.connection.driver_class&quot;);</span>
+<span class="fc" id="L40">    String url = properties.getProperty(&quot;hibernate.connection.url&quot;);</span>
+<span class="fc" id="L41">    String user = properties.getProperty(&quot;hibernate.connection.user&quot;);</span>
+<span class="fc" id="L42">    String password = properties.getProperty(&quot;hibernate.connection.password&quot;);</span>
+<span class="fc" id="L43">    JDBCAdapter adapter = new JDBCAdapter(driver, url, user, password);</span>
+
+<span class="fc" id="L45">    InputStream modelStream = this.getClass().getResourceAsStream(&quot;/jcasbin_auth_model.conf&quot;);</span>
+<span class="fc" id="L46">    String string = IOUtils.toString(modelStream, StandardCharsets.UTF_8);</span>
+<span class="fc" id="L47">    Model model = new Model();</span>
+<span class="fc" id="L48">    model.loadModelFromText(string);</span>
+
+<span class="fc" id="L50">    enforcer = new Enforcer(model, adapter);</span>
+<span class="fc" id="L51">    enforcer.enableAutoSave(true);</span>
+<span class="fc" id="L52">  }</span>
+
+  @Override
+  public boolean grantAuthorization(UUID principal, UUID resource, Privileges action) {
+<span class="fc" id="L56">    return enforcer.addPolicy(principal.toString(), resource.toString(), action.toString());</span>
+  }
+
+  @Override
+  public boolean revokeAuthorization(UUID principal, UUID resource, Privileges action) {
+<span class="fc" id="L61">    return enforcer.removePolicy(principal.toString(), resource.toString(), action.toString());</span>
+  }
+
+  @Override
+  public boolean clearAuthorizationsForPrincipal(UUID principal) {
+<span class="fc" id="L66">    return enforcer.removeFilteredPolicy(PRINCIPAL_INDEX, principal.toString());</span>
+  }
+
+  @Override
+  public boolean clearAuthorizationsForResource(UUID resource) {
+<span class="nc" id="L71">    return enforcer.removeFilteredPolicy(RESOURCE_INDEX, resource.toString());</span>
+  }
+
+  @Override
+  public boolean addHierarchyChild(UUID parent, UUID child) {
+<span class="fc" id="L76">    return enforcer.addNamedGroupingPolicy(HIERARCHY_POLICY, parent.toString(), child.toString());</span>
+  }
+
+  @Override
+  public boolean removeHierarchyChild(UUID parent, UUID child) {
+<span class="fc" id="L81">    return enforcer.removeNamedGroupingPolicy(</span>
+<span class="fc" id="L82">        HIERARCHY_POLICY, parent.toString(), child.toString());</span>
+  }
+
+  @Override
+  public boolean removeHierarchyChildren(UUID resource) {
+<span class="fc" id="L87">    return enforcer.removeFilteredNamedGroupingPolicy(</span>
+<span class="fc" id="L88">        HIERARCHY_POLICY, HIERARCHY_PARENT_INDEX, resource.toString());</span>
+  }
+
+  @Override
+  public UUID getHierarchyParent(UUID resource) {
+<span class="nc" id="L93">    List&lt;List&lt;String&gt;&gt; policy =</span>
+<span class="nc" id="L94">        enforcer.getFilteredNamedGroupingPolicy(</span>
+<span class="nc" id="L95">            HIERARCHY_POLICY, HIERARCHY_CHILD_INDEX, resource.toString());</span>
+<span class="nc bnc" id="L96" title="All 4 branches missed.">    if (policy.isEmpty() || policy.get(0).isEmpty()) {</span>
+<span class="nc" id="L97">      return null;</span>
+    }
+<span class="nc" id="L99">    return UUID.fromString(policy.get(0).get(HIERARCHY_PARENT_INDEX));</span>
+  }
+
+  @Override
+  public boolean authorize(UUID principal, UUID resource, Privileges action) {
+<span class="fc" id="L104">    return enforcer.enforce(principal.toString(), resource.toString(), action.toString());</span>
+  }
+
+  @Override
+  public boolean authorizeAny(UUID principal, UUID resource, Privileges... actions) {
+<span class="fc" id="L109">    return Arrays.stream(actions)</span>
+<span class="fc" id="L110">        .anyMatch(</span>
+            action -&gt;
+                enforcer.enforce(principal.toString(), resource.toString(), action.toString()));
+  }
+
+  @Override
+  public boolean authorizeAll(UUID principal, UUID resource, Privileges... actions) {
+<span class="fc" id="L117">    return Arrays.stream(actions)</span>
+<span class="fc" id="L118">        .allMatch(</span>
+            action -&gt;
+                enforcer.enforce(principal.toString(), resource.toString(), action.toString()));
+  }
+
+  @Override
+  public List&lt;Privileges&gt; listAuthorizations(UUID principal, UUID resource) {
+<span class="fc" id="L125">    List&lt;List&lt;String&gt;&gt; list =</span>
+<span class="fc" id="L126">        enforcer.getPermissionsForUserInDomain(principal.toString(), resource.toString());</span>
+<span class="fc" id="L127">    return list.stream()</span>
+<span class="fc" id="L128">        .map(l -&gt; l.get(PRIVILEGE_INDEX))</span>
+<span class="fc" id="L129">        .map(Privileges::fromValue)</span>
+<span class="fc" id="L130">        .collect(Collectors.toList());</span>
+  }
+
+  @Override
+  public Map&lt;UUID, List&lt;Privileges&gt;&gt; listAuthorizations(UUID resource) {
+<span class="fc" id="L135">    return enforcer.getFilteredPolicy(RESOURCE_INDEX, resource.toString()).stream()</span>
+<span class="fc" id="L136">        .collect(</span>
+<span class="fc" id="L137">            Collectors.groupingBy(</span>
+                l -&gt; UUID.fromString(l.get(PRINCIPAL_INDEX)),
+<span class="fc" id="L139">                Collectors.mapping(</span>
+<span class="fc" id="L140">                    l -&gt; Privileges.fromValue(l.get(PRIVILEGE_INDEX)), Collectors.toList())));</span>
+  }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.7.202105040129</span></div></body></html>

@@ -1,0 +1,208 @@
+<?xml version="1.0" encoding="utf-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>UserRepository.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=2;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Jacoco Coverage Report</a> &gt; <a href="index.source.html" class="el_package">io.unitycatalog.server.persist</a> &gt; <span class="el_source">UserRepository.java</span></div><h1>UserRepository.java</h1><pre class="source lang-java linenums">package io.unitycatalog.server.persist;
+
+import io.unitycatalog.control.model.User;
+import io.unitycatalog.server.exception.BaseException;
+import io.unitycatalog.server.exception.ErrorCode;
+import io.unitycatalog.server.persist.dao.UserDAO;
+import io.unitycatalog.server.persist.model.CreateUser;
+import io.unitycatalog.server.persist.model.UpdateUser;
+import io.unitycatalog.server.persist.utils.PagedListingHelper;
+import io.unitycatalog.server.persist.utils.TransactionManager;
+import io.unitycatalog.server.utils.IdentityUtils;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+import java.util.function.Predicate;
+import java.util.stream.Collectors;
+import org.hibernate.Session;
+import org.hibernate.SessionFactory;
+import org.hibernate.query.Query;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+public class UserRepository {
+<span class="fc" id="L25">  private static final Logger LOGGER = LoggerFactory.getLogger(UserRepository.class);</span>
+  private final SessionFactory sessionFactory;
+<span class="fc" id="L27">  private static final PagedListingHelper&lt;UserDAO&gt; LISTING_HELPER =</span>
+      new PagedListingHelper&lt;&gt;(UserDAO.class);
+
+<span class="fc" id="L30">  public UserRepository(Repositories repositories, SessionFactory sessionFactory) {</span>
+<span class="fc" id="L31">    this.sessionFactory = sessionFactory;</span>
+<span class="fc" id="L32">  }</span>
+
+  public User createUser(CreateUser createUser) {
+<span class="fc" id="L35">    User user =</span>
+        new User()
+<span class="fc" id="L37">            .id(UUID.randomUUID().toString())</span>
+<span class="fc" id="L38">            .name(createUser.getName())</span>
+<span class="fc" id="L39">            .email(createUser.getEmail())</span>
+<span class="fc" id="L40">            .externalId(createUser.getExternalId())</span>
+<span class="fc" id="L41">            .state(User.StateEnum.ENABLED)</span>
+<span class="fc" id="L42">            .createdAt(System.currentTimeMillis());</span>
+
+<span class="fc" id="L44">    return TransactionManager.executeWithTransaction(</span>
+        sessionFactory,
+        session -&gt; {
+          if (getUserByEmail(session, user.getEmail()) != null
+              || (user.getExternalId() != null
+                  &amp;&amp; getUserByExternalId(session, user.getExternalId()) != null)) {
+            throw new BaseException(
+                ErrorCode.ALREADY_EXISTS, &quot;User already exists: &quot; + user.getEmail());
+          }
+          session.persist(UserDAO.from(user));
+          return user;
+        },
+        &quot;Failed to create user&quot;,
+        /* readOnly = */ false);
+  }
+
+  public List&lt;User&gt; listUsers(int startIndex, int maxUsers, Predicate&lt;User&gt; filter) {
+<span class="nc" id="L61">    return TransactionManager.executeWithTransaction(</span>
+        sessionFactory,
+        session -&gt; {
+          int count = 0;
+          List&lt;User&gt; users = new ArrayList&lt;&gt;();
+
+          Optional&lt;String&gt; nextPageToken = Optional.empty();
+          boolean hasMore = true;
+          while (users.size() &lt; maxUsers &amp;&amp; hasMore) {
+            List&lt;UserDAO&gt; userDAOs =
+                LISTING_HELPER.listEntity(session, Optional.empty(), nextPageToken, null);
+
+            List&lt;User&gt; userBlock =
+                userDAOs.stream()
+                    .map(UserDAO::toUser)
+                    .filter(filter::test)
+                    .collect(Collectors.toList());
+
+            if (count + userBlock.size() &lt; startIndex) {
+              // if we haven't reached the start index, skip the block
+              count += userBlock.size();
+            } else if (count &gt;= startIndex) {
+              // we've already reached the start index, add the whole block
+              users.addAll(userBlock);
+              count += userBlock.size();
+            } else {
+              // we'll reach the start index in this block somewhere.
+              int firstIndex = startIndex - count;
+              users.addAll(userBlock.subList(firstIndex, userBlock.size()));
+              count += userBlock.size();
+            }
+            nextPageToken =
+                Optional.ofNullable(
+                    userDAOs.isEmpty() ? null : userDAOs.get(userDAOs.size() - 1).getName());
+            hasMore = nextPageToken.isPresent();
+          }
+
+          return users.subList(0, Math.min(users.size(), maxUsers));
+        },
+        &quot;Failed to list users&quot;,
+        /* readOnly = */ true);
+  }
+
+  public User getUser(String id) {
+<span class="fc" id="L105">    return TransactionManager.executeWithTransaction(</span>
+        sessionFactory,
+        session -&gt; {
+          UserDAO userDAO = getUserById(session, id);
+          if (userDAO == null) {
+            throw new BaseException(ErrorCode.NOT_FOUND, &quot;User not found: &quot; + id);
+          }
+          return userDAO.toUser();
+        },
+        &quot;Failed to get user&quot;,
+        /* readOnly = */ true);
+  }
+
+  public UserDAO getUserById(Session session, String id) {
+<span class="fc" id="L119">    Query&lt;UserDAO&gt; query = session.createQuery(&quot;FROM UserDAO WHERE id = :id&quot;, UserDAO.class);</span>
+<span class="fc" id="L120">    query.setParameter(&quot;id&quot;, UUID.fromString(id));</span>
+<span class="fc" id="L121">    query.setMaxResults(1);</span>
+<span class="fc" id="L122">    return query.uniqueResult();</span>
+  }
+
+  public User getUserByEmail(String email) {
+<span class="fc" id="L126">    return TransactionManager.executeWithTransaction(</span>
+        sessionFactory,
+        session -&gt; {
+          UserDAO userDAO = getUserByEmail(session, email);
+          if (userDAO == null) {
+            throw new BaseException(ErrorCode.NOT_FOUND, &quot;User not found: &quot; + email);
+          }
+          return userDAO.toUser();
+        },
+        &quot;Failed to get user by email&quot;,
+        /* readOnly = */ true);
+  }
+
+  public UserDAO getUserByEmail(Session session, String email) {
+<span class="fc" id="L140">    Query&lt;UserDAO&gt; query = session.createQuery(&quot;FROM UserDAO WHERE email = :email&quot;, UserDAO.class);</span>
+<span class="fc" id="L141">    query.setParameter(&quot;email&quot;, email);</span>
+<span class="fc" id="L142">    query.setMaxResults(1);</span>
+<span class="fc" id="L143">    return query.uniqueResult();</span>
+  }
+
+  public UserDAO getUserByExternalId(Session session, String externalId) {
+<span class="nc" id="L147">    Query&lt;UserDAO&gt; query =</span>
+<span class="nc" id="L148">        session.createQuery(&quot;FROM UserDAO WHERE externalId = :externalId&quot;, UserDAO.class);</span>
+<span class="nc" id="L149">    query.setParameter(&quot;externalId&quot;, externalId);</span>
+<span class="nc" id="L150">    query.setMaxResults(1);</span>
+<span class="nc" id="L151">    return query.uniqueResult();</span>
+  }
+
+  public User updateUser(String id, UpdateUser updateUser) {
+<span class="nc" id="L155">    return TransactionManager.executeWithTransaction(</span>
+        sessionFactory,
+        session -&gt; {
+          UserDAO userDAO = getUserById(session, id);
+          if (userDAO == null) {
+            throw new BaseException(ErrorCode.NOT_FOUND, &quot;User not found: &quot; + id);
+          }
+          if (updateUser.getName() != null) {
+            userDAO.setName(updateUser.getName());
+          }
+          if (updateUser.getActive() != null) {
+            userDAO.setState(
+                updateUser.getActive()
+                    ? User.StateEnum.ENABLED.toString()
+                    : User.StateEnum.DISABLED.toString());
+          }
+          if (updateUser.getExternalId() != null) {
+            userDAO.setExternalId(updateUser.getExternalId());
+          }
+          session.merge(userDAO);
+          return userDAO.toUser();
+        },
+        &quot;Failed to update user&quot;,
+        /* readOnly = */ false);
+  }
+
+  public void deleteUser(String id) {
+<span class="fc" id="L182">    TransactionManager.executeWithTransaction(</span>
+        sessionFactory,
+        session -&gt; {
+          UserDAO userDAO = getUserById(session, id);
+          if (userDAO != null) {
+            userDAO.setState(User.StateEnum.DISABLED.toString());
+            session.merge(userDAO);
+            LOGGER.info(&quot;Deleted user: {}&quot;, id);
+            return null;
+          } else {
+            throw new BaseException(ErrorCode.NOT_FOUND, &quot;User not found: &quot; + id);
+          }
+        },
+        &quot;Failed to delete user&quot;,
+        /* readOnly = */ false);
+<span class="fc" id="L197">  }</span>
+
+  public UUID findPrincipalId() {
+<span class="fc" id="L200">    String principalEmailAddress = IdentityUtils.findPrincipalEmailAddress();</span>
+<span class="fc bfc" id="L201" title="All 2 branches covered.">    if (principalEmailAddress != null) {</span>
+<span class="fc" id="L202">      return UUID.fromString(getUserByEmail(principalEmailAddress).getId());</span>
+    } else {
+<span class="fc" id="L204">      return null;</span>
+    }
+  }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.7.202105040129</span></div></body></html>

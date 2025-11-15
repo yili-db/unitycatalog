@@ -1,0 +1,140 @@
+<?xml version="1.0" encoding="utf-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>UriUtils.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=2;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Jacoco Coverage Report</a> &gt; <a href="index.source.html" class="el_package">io.unitycatalog.server.persist.utils</a> &gt; <span class="el_source">UriUtils.java</span></div><h1>UriUtils.java</h1><pre class="source lang-java linenums">package io.unitycatalog.server.persist.utils;
+
+import static io.unitycatalog.server.utils.Constants.URI_SCHEME_ABFS;
+import static io.unitycatalog.server.utils.Constants.URI_SCHEME_ABFSS;
+import static io.unitycatalog.server.utils.Constants.URI_SCHEME_GS;
+import static io.unitycatalog.server.utils.Constants.URI_SCHEME_S3;
+
+import io.unitycatalog.server.exception.BaseException;
+import io.unitycatalog.server.exception.ErrorCode;
+import io.unitycatalog.server.model.TemporaryCredentials;
+import java.io.IOException;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.nio.file.FileVisitOption;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.Comparator;
+import java.util.Optional;
+import java.util.stream.Stream;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+public class UriUtils {
+<span class="fc" id="L25">  private static final Logger LOGGER = LoggerFactory.getLogger(UriUtils.class);</span>
+
+<span class="fc" id="L27">  private enum Operation {</span>
+<span class="fc" id="L28">    CREATE,</span>
+<span class="fc" id="L29">    DELETE</span>
+  }
+
+  private UriUtils() {}
+
+  public static String createStorageLocationPath(String uri) {
+<span class="fc" id="L35">    return updateDirectoryFromUri(uri, Operation.CREATE, Optional.empty()).toString();</span>
+  }
+
+  public static String deleteStorageLocationPath(String uri) {
+<span class="fc" id="L39">    return updateDirectoryFromUri(uri, Operation.DELETE, Optional.empty()).toString();</span>
+  }
+
+  private static URI updateDirectoryFromUri(
+      String uri, Operation op, Optional&lt;TemporaryCredentials&gt; credentials) {
+<span class="fc" id="L44">    URI parsedUri = URI.create(uri);</span>
+<span class="fc" id="L45">    validateURI(parsedUri);</span>
+    try {
+<span class="pc bpc" id="L47" title="1 of 2 branches missed.">      if (parsedUri.getScheme().equals(&quot;file&quot;)) {</span>
+<span class="fc" id="L48">        return updateLocalDirectory(parsedUri, op);</span>
+<span class="nc bnc" id="L49" title="All 2 branches missed.">      } else if (parsedUri.getScheme().equals(URI_SCHEME_S3)) {</span>
+        // For v0.2, we will NOT create the path in cloud storage since MLflow uses the native cloud
+        // clients and not the hadoopfs libraries.  We will update this in v0.3 when UC OSS begins
+        // using the hadoopfs libraries.
+        /* return updateS3Directory(parsedUri, op, credentials.get().getAwsTempCredentials()); */
+<span class="nc" id="L54">        return parsedUri;</span>
+<span class="nc bnc" id="L55" title="All 2 branches missed.">      } else if (parsedUri.getScheme().equals(URI_SCHEME_GS)) {</span>
+        // For v0.2, we will NOT create the path in cloud storage since MLflow uses the native cloud
+        // clients and not the hadoopfs libraries.  We will update this in v0.3 when UC OSS begins
+        // using the hadoopfs libraries.
+        /* return updateGcDirectory(parsedUri, op, credentials.get().getGcpOauthToken()); */
+<span class="nc" id="L60">        return parsedUri;</span>
+<span class="nc bnc" id="L61" title="All 2 branches missed.">      } else if (parsedUri.getScheme().equals(URI_SCHEME_ABFS)</span>
+<span class="nc bnc" id="L62" title="All 2 branches missed.">          || parsedUri.getScheme().equals(URI_SCHEME_ABFSS)) {</span>
+        // For v0.2, we will NOT create the path in cloud storage since MLflow uses the native cloud
+        // clients and not the hadoopfs libraries.  We will update this in v0.3 when UC OSS begins
+        // using the hadoopfs libraries.
+        // return updateAbsDirectory(parsedUri, op, credentials.get().getAzureUserDelegationSas()
+        // );
+<span class="nc" id="L68">        return parsedUri;</span>
+      }
+<span class="nc" id="L70">    } catch (Exception e) {</span>
+<span class="nc" id="L71">      throw new BaseException(</span>
+          ErrorCode.INTERNAL,
+<span class="nc" id="L73">          String.format(</span>
+              &quot;Error attempting to %s URI %s: %s&quot;,
+<span class="nc" id="L75">              op.name(), parsedUri.toString(), e.getMessage()));</span>
+<span class="nc" id="L76">    }</span>
+<span class="nc" id="L77">    throw new BaseException(</span>
+<span class="nc" id="L78">        ErrorCode.INVALID_ARGUMENT, &quot;Unknown scheme detected: &quot; + parsedUri.getScheme());</span>
+  }
+
+  public static boolean isValidURI(String uri) {
+    try {
+<span class="fc" id="L83">      URI testURI = new URI(uri);</span>
+<span class="pc bpc" id="L84" title="1 of 4 branches missed.">      if (testURI.getScheme() != null &amp;&amp; testURI.getPath() != null) {</span>
+<span class="fc" id="L85">        return true;</span>
+      }
+<span class="fc" id="L87">      return false;</span>
+<span class="nc" id="L88">    } catch (URISyntaxException e) {</span>
+<span class="nc" id="L89">      return false;</span>
+    }
+  }
+
+  private static URI updateLocalDirectory(URI parsedUri, Operation op) throws IOException {
+<span class="fc" id="L94">    Path dirPath = Paths.get(parsedUri);</span>
+<span class="fc bfc" id="L95" title="All 2 branches covered.">    if (op == Operation.CREATE) {</span>
+      // Check if directory already exists
+<span class="pc bpc" id="L97" title="1 of 2 branches missed.">      if (Files.exists(dirPath)) {</span>
+<span class="nc" id="L98">        throw new BaseException(ErrorCode.ALREADY_EXISTS, &quot;Directory already exists: &quot; + dirPath);</span>
+      }
+      // Create the directory
+      try {
+<span class="fc" id="L102">        Files.createDirectories(dirPath);</span>
+<span class="fc" id="L103">        LOGGER.debug(&quot;Directory created successfully: {}&quot;, dirPath);</span>
+<span class="nc" id="L104">      } catch (Exception e) {</span>
+<span class="nc" id="L105">        throw new BaseException(ErrorCode.INTERNAL, &quot;Failed to create directory: &quot; + dirPath, e);</span>
+<span class="fc" id="L106">      }</span>
+    }
+<span class="fc bfc" id="L108" title="All 2 branches covered.">    if (op == Operation.DELETE) {</span>
+<span class="pc bpc" id="L109" title="1 of 2 branches missed.">      if (Files.exists(dirPath)) {</span>
+<span class="fc" id="L110">        try (Stream&lt;Path&gt; walk = Files.walk(dirPath, FileVisitOption.FOLLOW_LINKS)) {</span>
+<span class="fc" id="L111">          walk.sorted(Comparator.reverseOrder())</span>
+<span class="fc" id="L112">              .forEach(</span>
+                  path -&gt; {
+                    try {
+                      Files.delete(path);
+                    } catch (IOException e) {
+                      throw new RuntimeException(&quot;Failed to delete &quot; + path, e);
+                    }
+                  });
+<span class="nc" id="L120">        } catch (IOException e) {</span>
+<span class="nc" id="L121">          throw new RuntimeException(&quot;Failed to delete &quot; + dirPath, e);</span>
+<span class="fc" id="L122">        }</span>
+      } else {
+<span class="nc" id="L124">        throw new IOException(&quot;Directory does not exist: &quot; + dirPath);</span>
+      }
+    }
+<span class="fc" id="L127">    return parsedUri;</span>
+  }
+
+  public static void validateURI(URI uri) {
+<span class="fc bfc" id="L131" title="All 2 branches covered.">    if (uri.getScheme() == null) {</span>
+<span class="fc" id="L132">      throw new BaseException(ErrorCode.INVALID_ARGUMENT, &quot;Invalid path: &quot; + uri.getPath());</span>
+    }
+<span class="fc" id="L134">    URI normalized = uri.normalize();</span>
+<span class="pc bpc" id="L135" title="1 of 2 branches missed.">    if (!normalized.getPath().startsWith(uri.getPath())) {</span>
+<span class="nc" id="L136">      throw new BaseException(ErrorCode.INVALID_ARGUMENT, &quot;Normalization failed: &quot; + uri.getPath());</span>
+    }
+<span class="fc" id="L138">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.7.202105040129</span></div></body></html>

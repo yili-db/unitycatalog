@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="utf-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>RegisteredModelInfoDAO.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=2;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Jacoco Coverage Report</a> &gt; <a href="index.source.html" class="el_package">io.unitycatalog.server.persist.dao</a> &gt; <span class="el_source">RegisteredModelInfoDAO.java</span></div><h1>RegisteredModelInfoDAO.java</h1><pre class="source lang-java linenums">package io.unitycatalog.server.persist.dao;
+
+import io.unitycatalog.server.model.RegisteredModelInfo;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.Index;
+import jakarta.persistence.Table;
+import java.util.Date;
+import java.util.UUID;
+import lombok.AllArgsConstructor;
+import lombok.EqualsAndHashCode;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import lombok.Setter;
+import lombok.experimental.SuperBuilder;
+
+// Hibernate annotations
+@Entity
+@Table(
+    name = &quot;uc_registered_models&quot;,
+    indexes = {
+      @Index(name = &quot;uc_registered_models_name_idx&quot;, columnList = &quot;name&quot;),
+    })
+// Lombok annotations
+@Getter
+<span class="pc" id="L26">@Setter</span>
+<span class="fc" id="L27">@NoArgsConstructor</span>
+<span class="nc" id="L28">@AllArgsConstructor</span>
+<span class="nc bnc" id="L29" title="All 80 branches missed.">@EqualsAndHashCode(callSuper = true)</span>
+<span class="pc" id="L30">@SuperBuilder</span>
+public class RegisteredModelInfoDAO extends IdentifiableDAO {
+  @Column(name = &quot;schema_id&quot;)
+<span class="fc" id="L33">  private UUID schemaId;</span>
+
+  @Column(name = &quot;owner&quot;)
+<span class="nc" id="L36">  private String owner;</span>
+
+  @Column(name = &quot;created_at&quot;)
+<span class="nc" id="L39">  private Date createdAt;</span>
+
+  @Column(name = &quot;created_by&quot;)
+<span class="nc" id="L42">  private String createdBy;</span>
+
+  @Column(name = &quot;updated_at&quot;)
+<span class="nc" id="L45">  private Date updatedAt;</span>
+
+  @Column(name = &quot;updated_by&quot;)
+<span class="nc" id="L48">  private String updatedBy;</span>
+
+  @Column(name = &quot;comment&quot;, length = 65535)
+<span class="nc" id="L51">  private String comment;</span>
+
+  @Column(name = &quot;url&quot;, length = 4096)
+<span class="nc" id="L54">  private String url;</span>
+
+  @Column(name = &quot;max_version_number&quot;)
+<span class="fc" id="L57">  private Long maxVersionNumber;</span>
+
+  public static RegisteredModelInfoDAO from(RegisteredModelInfo registeredModelInfo) {
+<span class="fc" id="L60">    return RegisteredModelInfoDAO.builder()</span>
+<span class="fc" id="L61">        .id(UUID.fromString(registeredModelInfo.getId()))</span>
+<span class="fc" id="L62">        .name(registeredModelInfo.getName())</span>
+<span class="fc" id="L63">        .comment(registeredModelInfo.getComment())</span>
+<span class="fc" id="L64">        .owner(registeredModelInfo.getOwner())</span>
+<span class="fc" id="L65">        .createdAt(</span>
+<span class="pc bpc" id="L66" title="1 of 2 branches missed.">            registeredModelInfo.getCreatedAt() != null</span>
+<span class="fc" id="L67">                ? new Date(registeredModelInfo.getCreatedAt())</span>
+<span class="nc" id="L68">                : new Date())</span>
+<span class="fc" id="L69">        .createdBy(registeredModelInfo.getCreatedBy())</span>
+<span class="fc" id="L70">        .updatedAt(</span>
+<span class="pc bpc" id="L71" title="1 of 2 branches missed.">            registeredModelInfo.getUpdatedAt() != null</span>
+<span class="fc" id="L72">                ? new Date(registeredModelInfo.getUpdatedAt())</span>
+<span class="nc" id="L73">                : null)</span>
+<span class="fc" id="L74">        .updatedBy(registeredModelInfo.getUpdatedBy())</span>
+<span class="fc" id="L75">        .url(registeredModelInfo.getStorageLocation())</span>
+<span class="fc" id="L76">        .build();</span>
+  }
+
+  public RegisteredModelInfo toRegisteredModelInfo() {
+<span class="fc" id="L80">    RegisteredModelInfo registeredModelInfo =</span>
+        new RegisteredModelInfo()
+<span class="fc" id="L82">            .id(getId().toString())</span>
+<span class="fc" id="L83">            .name(getName())</span>
+<span class="fc" id="L84">            .storageLocation(url)</span>
+<span class="fc" id="L85">            .comment(comment)</span>
+<span class="fc" id="L86">            .owner(owner)</span>
+<span class="pc bpc" id="L87" title="1 of 2 branches missed.">            .createdAt(createdAt != null ? createdAt.getTime() : null)</span>
+<span class="fc" id="L88">            .createdBy(createdBy)</span>
+<span class="pc bpc" id="L89" title="1 of 2 branches missed.">            .updatedAt(updatedAt != null ? updatedAt.getTime() : null)</span>
+<span class="fc" id="L90">            .updatedBy(updatedBy);</span>
+<span class="fc" id="L91">    return registeredModelInfo;</span>
+  }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.7.202105040129</span></div></body></html>

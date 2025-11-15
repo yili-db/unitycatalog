@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="utf-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AuthorizedService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=2;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Jacoco Coverage Report</a> &gt; <a href="index.source.html" class="el_package">io.unitycatalog.server.service</a> &gt; <span class="el_source">AuthorizedService.java</span></div><h1>AuthorizedService.java</h1><pre class="source lang-java linenums">package io.unitycatalog.server.service;
+
+import io.unitycatalog.server.auth.UnityCatalogAuthorizer;
+import io.unitycatalog.server.auth.decorator.UnityAccessEvaluator;
+import io.unitycatalog.server.persist.UserRepository;
+import io.unitycatalog.server.persist.model.Privileges;
+import java.util.UUID;
+import lombok.SneakyThrows;
+
+/**
+ * Abstract service class that provides common authorization functionality for all Unity Catalog
+ * services.
+ */
+public abstract class AuthorizedService {
+  protected final UnityCatalogAuthorizer authorizer;
+  protected final UnityAccessEvaluator evaluator;
+  protected final UserRepository userRepository;
+
+<span class="pc" id="L19">  @SneakyThrows</span>
+<span class="fc" id="L20">  protected AuthorizedService(UnityCatalogAuthorizer authorizer, UserRepository userRepository) {</span>
+<span class="fc" id="L21">    this.authorizer = authorizer;</span>
+<span class="fc" id="L22">    this.evaluator = new UnityAccessEvaluator(authorizer);</span>
+<span class="fc" id="L23">    this.userRepository = userRepository;</span>
+<span class="fc" id="L24">  }</span>
+
+  /**
+   * Initializes basic authorization for a resource by granting owner privileges to the current
+   * principal.
+   *
+   * @param resourceId String ID of the resource to grant permission for
+   */
+  protected void initializeBasicAuthorization(String resourceId) {
+<span class="fc" id="L33">    UUID principalId = userRepository.findPrincipalId();</span>
+<span class="fc" id="L34">    authorizer.grantAuthorization(principalId, UUID.fromString(resourceId), Privileges.OWNER);</span>
+<span class="fc" id="L35">  }</span>
+
+  /**
+   * Initializes hierarchical authorization for a resource by granting owner privileges to the
+   * current principal and establishing a parent-child relationship.
+   *
+   * @param resourceId String ID of the resource to grant permission for
+   * @param parentId String ID of the parent resource
+   */
+  protected void initializeHierarchicalAuthorization(String resourceId, String parentId) {
+<span class="fc" id="L45">    initializeBasicAuthorization(resourceId);</span>
+<span class="fc" id="L46">    authorizer.addHierarchyChild(UUID.fromString(parentId), UUID.fromString(resourceId));</span>
+<span class="fc" id="L47">  }</span>
+
+  /**
+   * Removes all authorizations for a resource.
+   *
+   * @param resourceId String ID of the resource to remove authorizations for
+   */
+  protected void removeAuthorizations(String resourceId) {
+<span class="fc" id="L55">    authorizer.clearAuthorizationsForResource(UUID.fromString(resourceId));</span>
+<span class="fc" id="L56">  }</span>
+
+  /**
+   * Removes all authorizations for a resource and removes the parent-child relationship.
+   *
+   * @param resourceId String ID of the resource to remove authorizations for
+   * @param parentId String ID of the parent resource
+   */
+  protected void removeHierarchicalAuthorizations(String resourceId, String parentId) {
+<span class="fc" id="L65">    removeAuthorizations(resourceId);</span>
+<span class="fc" id="L66">    authorizer.removeHierarchyChild(UUID.fromString(parentId), UUID.fromString(resourceId));</span>
+<span class="fc" id="L67">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.7.202105040129</span></div></body></html>

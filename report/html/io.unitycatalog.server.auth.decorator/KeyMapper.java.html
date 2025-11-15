@@ -1,0 +1,216 @@
+<?xml version="1.0" encoding="utf-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>KeyMapper.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=2;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Jacoco Coverage Report</a> &gt; <a href="index.source.html" class="el_package">io.unitycatalog.server.auth.decorator</a> &gt; <span class="el_source">KeyMapper.java</span></div><h1>KeyMapper.java</h1><pre class="source lang-java linenums">package io.unitycatalog.server.auth.decorator;
+
+import static io.unitycatalog.server.model.SecurableType.CATALOG;
+import static io.unitycatalog.server.model.SecurableType.FUNCTION;
+import static io.unitycatalog.server.model.SecurableType.METASTORE;
+import static io.unitycatalog.server.model.SecurableType.REGISTERED_MODEL;
+import static io.unitycatalog.server.model.SecurableType.SCHEMA;
+import static io.unitycatalog.server.model.SecurableType.TABLE;
+import static io.unitycatalog.server.model.SecurableType.VOLUME;
+
+import io.unitycatalog.server.model.CatalogInfo;
+import io.unitycatalog.server.model.FunctionInfo;
+import io.unitycatalog.server.model.RegisteredModelInfo;
+import io.unitycatalog.server.model.SchemaInfo;
+import io.unitycatalog.server.model.SecurableType;
+import io.unitycatalog.server.model.TableInfo;
+import io.unitycatalog.server.model.VolumeInfo;
+import io.unitycatalog.server.persist.CatalogRepository;
+import io.unitycatalog.server.persist.FunctionRepository;
+import io.unitycatalog.server.persist.MetastoreRepository;
+import io.unitycatalog.server.persist.ModelRepository;
+import io.unitycatalog.server.persist.Repositories;
+import io.unitycatalog.server.persist.SchemaRepository;
+import io.unitycatalog.server.persist.TableRepository;
+import io.unitycatalog.server.persist.VolumeRepository;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
+import org.apache.commons.lang3.tuple.Pair;
+
+public class KeyMapper {
+  private final CatalogRepository catalogRepository;
+  private final SchemaRepository schemaRepository;
+  private final TableRepository tableRepository;
+  private final VolumeRepository volumeRepository;
+  private final FunctionRepository functionRepository;
+  private final ModelRepository modelRepository;
+  private final MetastoreRepository metastoreRepository;
+
+<span class="fc" id="L40">  public KeyMapper(Repositories repositories) {</span>
+<span class="fc" id="L41">    this.catalogRepository = repositories.getCatalogRepository();</span>
+<span class="fc" id="L42">    this.schemaRepository = repositories.getSchemaRepository();</span>
+<span class="fc" id="L43">    this.tableRepository = repositories.getTableRepository();</span>
+<span class="fc" id="L44">    this.volumeRepository = repositories.getVolumeRepository();</span>
+<span class="fc" id="L45">    this.functionRepository = repositories.getFunctionRepository();</span>
+<span class="fc" id="L46">    this.modelRepository = repositories.getModelRepository();</span>
+<span class="fc" id="L47">    this.metastoreRepository = repositories.getMetastoreRepository();</span>
+<span class="fc" id="L48">  }</span>
+
+  public Map&lt;SecurableType, Object&gt; mapResourceKeys(Map&lt;SecurableType, Object&gt; resourceKeys) {
+<span class="fc" id="L51">    Map&lt;SecurableType, Object&gt; resourceIds = new HashMap&lt;&gt;();</span>
+
+<span class="fc bfc" id="L53" title="All 2 branches covered.">    if (resourceKeys.containsKey(CATALOG)</span>
+<span class="fc bfc" id="L54" title="All 2 branches covered.">        &amp;&amp; resourceKeys.containsKey(SCHEMA)</span>
+<span class="pc bpc" id="L55" title="1 of 2 branches missed.">        &amp;&amp; resourceKeys.containsKey(TABLE)) {</span>
+<span class="nc" id="L56">      String fullName =</span>
+<span class="nc" id="L57">          resourceKeys.get(CATALOG)</span>
+              + &quot;.&quot;
+<span class="nc" id="L59">              + resourceKeys.get(SCHEMA)</span>
+              + &quot;.&quot;
+<span class="nc" id="L61">              + resourceKeys.get(TABLE);</span>
+<span class="nc" id="L62">      TableInfo table = tableRepository.getTable(fullName);</span>
+<span class="nc" id="L63">      resourceIds.put(TABLE, UUID.fromString(table.getTableId()));</span>
+    }
+
+    // If only TABLE is specified, assuming its value is a full table name (including catalog and
+    // schema) or a table UUID.
+<span class="fc bfc" id="L68" title="All 2 branches covered.">    if (!resourceKeys.containsKey(CATALOG)</span>
+<span class="fc bfc" id="L69" title="All 2 branches covered.">        &amp;&amp; !resourceKeys.containsKey(SCHEMA)</span>
+<span class="fc bfc" id="L70" title="All 2 branches covered.">        &amp;&amp; resourceKeys.containsKey(TABLE)) {</span>
+<span class="fc" id="L71">      String fullName = (String) resourceKeys.get(TABLE);</span>
+      // If the full name contains a dot, we assume it's a full name, otherwise we assume it's an id
+<span class="fc" id="L73">      boolean isTableName = fullName.contains(&quot;.&quot;);</span>
+
+      UUID catalogId;
+      UUID schemaId;
+      UUID tableId;
+<span class="pc bpc" id="L78" title="1 of 2 branches missed.">      if (isTableName) {</span>
+<span class="nc" id="L79">        TableInfo table = tableRepository.getTable(fullName);</span>
+<span class="nc" id="L80">        String fullSchemaName = table.getCatalogName() + &quot;.&quot; + table.getSchemaName();</span>
+<span class="nc" id="L81">        SchemaInfo schema = schemaRepository.getSchema(fullSchemaName);</span>
+<span class="nc" id="L82">        CatalogInfo catalog = catalogRepository.getCatalog(table.getCatalogName());</span>
+<span class="nc" id="L83">        catalogId = UUID.fromString(catalog.getId());</span>
+<span class="nc" id="L84">        schemaId = UUID.fromString(schema.getSchemaId());</span>
+<span class="nc" id="L85">        tableId = UUID.fromString(table.getTableId());</span>
+<span class="nc" id="L86">      } else {</span>
+        // It may be the ID of either a table or staging table.
+<span class="fc" id="L88">        tableId = UUID.fromString(fullName);</span>
+<span class="fc" id="L89">        Pair&lt;UUID, UUID&gt; catalogAndSchemaIds =</span>
+<span class="fc" id="L90">            tableRepository.getCatalogSchemaIdsByTableOrStagingTableId(tableId);</span>
+<span class="fc" id="L91">        catalogId = catalogAndSchemaIds.getLeft();</span>
+<span class="fc" id="L92">        schemaId = catalogAndSchemaIds.getRight();</span>
+      }
+
+<span class="fc" id="L95">      resourceIds.put(TABLE, tableId);</span>
+<span class="fc" id="L96">      resourceIds.put(SCHEMA, schemaId);</span>
+<span class="fc" id="L97">      resourceIds.put(CATALOG, catalogId);</span>
+    }
+
+<span class="fc bfc" id="L100" title="All 2 branches covered.">    if (resourceKeys.containsKey(CATALOG)</span>
+<span class="fc bfc" id="L101" title="All 2 branches covered.">        &amp;&amp; resourceKeys.containsKey(SCHEMA)</span>
+<span class="pc bpc" id="L102" title="1 of 2 branches missed.">        &amp;&amp; resourceKeys.containsKey(VOLUME)) {</span>
+<span class="nc" id="L103">      String fullName =</span>
+<span class="nc" id="L104">          resourceKeys.get(CATALOG)</span>
+              + &quot;.&quot;
+<span class="nc" id="L106">              + resourceKeys.get(SCHEMA)</span>
+              + &quot;.&quot;
+<span class="nc" id="L108">              + resourceKeys.get(VOLUME);</span>
+<span class="nc" id="L109">      VolumeInfo volume = volumeRepository.getVolume(fullName);</span>
+<span class="nc" id="L110">      resourceIds.put(VOLUME, UUID.fromString(volume.getVolumeId()));</span>
+    }
+
+    // If only VOLUME is specified, assuming its value is a full volume name (including catalog and
+    // schema)
+<span class="fc bfc" id="L115" title="All 2 branches covered.">    if (!resourceKeys.containsKey(CATALOG)</span>
+<span class="fc bfc" id="L116" title="All 2 branches covered.">        &amp;&amp; !resourceKeys.containsKey(SCHEMA)</span>
+<span class="fc bfc" id="L117" title="All 2 branches covered.">        &amp;&amp; resourceKeys.containsKey(VOLUME)) {</span>
+<span class="fc" id="L118">      String fullName = (String) resourceKeys.get(VOLUME);</span>
+      // If the full name contains a dot, we assume it's a full name, otherwise we assume it's an id
+      VolumeInfo volume =
+<span class="pc bpc" id="L121" title="1 of 2 branches missed.">          (fullName.contains(&quot;.&quot;))</span>
+<span class="nc" id="L122">              ? volumeRepository.getVolume(fullName)</span>
+<span class="fc" id="L123">              : volumeRepository.getVolumeById(fullName);</span>
+<span class="fc" id="L124">      String fullSchemaName = volume.getCatalogName() + &quot;.&quot; + volume.getSchemaName();</span>
+<span class="fc" id="L125">      SchemaInfo schema = schemaRepository.getSchema(fullSchemaName);</span>
+<span class="fc" id="L126">      CatalogInfo catalog = catalogRepository.getCatalog(volume.getCatalogName());</span>
+<span class="fc" id="L127">      resourceIds.put(VOLUME, UUID.fromString(volume.getVolumeId()));</span>
+<span class="fc" id="L128">      resourceIds.put(SCHEMA, UUID.fromString(schema.getSchemaId()));</span>
+<span class="fc" id="L129">      resourceIds.put(CATALOG, UUID.fromString(catalog.getId()));</span>
+    }
+
+<span class="fc bfc" id="L132" title="All 2 branches covered.">    if (resourceKeys.containsKey(CATALOG)</span>
+<span class="fc bfc" id="L133" title="All 2 branches covered.">        &amp;&amp; resourceKeys.containsKey(SCHEMA)</span>
+<span class="pc bpc" id="L134" title="1 of 2 branches missed.">        &amp;&amp; resourceKeys.containsKey(FUNCTION)) {</span>
+<span class="nc" id="L135">      String fullName =</span>
+<span class="nc" id="L136">          resourceKeys.get(CATALOG)</span>
+              + &quot;.&quot;
+<span class="nc" id="L138">              + resourceKeys.get(SCHEMA)</span>
+              + &quot;.&quot;
+<span class="nc" id="L140">              + resourceKeys.get(FUNCTION);</span>
+<span class="nc" id="L141">      FunctionInfo function = functionRepository.getFunction(fullName);</span>
+<span class="nc" id="L142">      resourceIds.put(FUNCTION, UUID.fromString(function.getFunctionId()));</span>
+    }
+
+    // If only FUNCTION is specified, assuming its value is a full volume name (including catalog
+    // and schema)
+<span class="fc bfc" id="L147" title="All 2 branches covered.">    if (!resourceKeys.containsKey(CATALOG)</span>
+<span class="fc bfc" id="L148" title="All 2 branches covered.">        &amp;&amp; !resourceKeys.containsKey(SCHEMA)</span>
+<span class="pc bpc" id="L149" title="1 of 2 branches missed.">        &amp;&amp; resourceKeys.containsKey(FUNCTION)) {</span>
+<span class="nc" id="L150">      String fullName = (String) resourceKeys.get(FUNCTION);</span>
+<span class="nc" id="L151">      FunctionInfo function = functionRepository.getFunction(fullName);</span>
+<span class="nc" id="L152">      String fullSchemaName = function.getCatalogName() + &quot;.&quot; + function.getSchemaName();</span>
+<span class="nc" id="L153">      SchemaInfo schema = schemaRepository.getSchema(fullSchemaName);</span>
+<span class="nc" id="L154">      CatalogInfo catalog = catalogRepository.getCatalog(function.getCatalogName());</span>
+<span class="nc" id="L155">      resourceIds.put(FUNCTION, UUID.fromString(function.getFunctionId()));</span>
+<span class="nc" id="L156">      resourceIds.put(SCHEMA, UUID.fromString(schema.getSchemaId()));</span>
+<span class="nc" id="L157">      resourceIds.put(CATALOG, UUID.fromString(catalog.getId()));</span>
+    }
+
+<span class="fc bfc" id="L160" title="All 2 branches covered.">    if (resourceKeys.containsKey(CATALOG)</span>
+<span class="fc bfc" id="L161" title="All 2 branches covered.">        &amp;&amp; resourceKeys.containsKey(SCHEMA)</span>
+<span class="fc bfc" id="L162" title="All 2 branches covered.">        &amp;&amp; resourceKeys.containsKey(REGISTERED_MODEL)) {</span>
+<span class="fc" id="L163">      String fullName =</span>
+<span class="fc" id="L164">          resourceKeys.get(CATALOG)</span>
+              + &quot;.&quot;
+<span class="fc" id="L166">              + resourceKeys.get(SCHEMA)</span>
+              + &quot;.&quot;
+<span class="fc" id="L168">              + resourceKeys.get(REGISTERED_MODEL);</span>
+<span class="fc" id="L169">      RegisteredModelInfo model = modelRepository.getRegisteredModel(fullName);</span>
+<span class="fc" id="L170">      resourceIds.put(REGISTERED_MODEL, UUID.fromString(model.getId()));</span>
+    }
+
+    // If only REGISTERED_MODEL is specified, assuming its value is a full volume name (including
+    // catalog and schema)
+<span class="fc bfc" id="L175" title="All 2 branches covered.">    if (!resourceKeys.containsKey(CATALOG)</span>
+<span class="fc bfc" id="L176" title="All 2 branches covered.">        &amp;&amp; !resourceKeys.containsKey(SCHEMA)</span>
+<span class="pc bpc" id="L177" title="1 of 2 branches missed.">        &amp;&amp; resourceKeys.containsKey(REGISTERED_MODEL)) {</span>
+<span class="nc" id="L178">      String fullName = (String) resourceKeys.get(REGISTERED_MODEL);</span>
+<span class="nc" id="L179">      RegisteredModelInfo model = modelRepository.getRegisteredModel(fullName);</span>
+<span class="nc" id="L180">      String fullSchemaName = model.getCatalogName() + &quot;.&quot; + model.getSchemaName();</span>
+<span class="nc" id="L181">      SchemaInfo schema = schemaRepository.getSchema(fullSchemaName);</span>
+<span class="nc" id="L182">      CatalogInfo catalog = catalogRepository.getCatalog(model.getCatalogName());</span>
+<span class="nc" id="L183">      resourceIds.put(REGISTERED_MODEL, UUID.fromString(model.getId()));</span>
+<span class="nc" id="L184">      resourceIds.put(SCHEMA, UUID.fromString(schema.getSchemaId()));</span>
+<span class="nc" id="L185">      resourceIds.put(CATALOG, UUID.fromString(catalog.getId()));</span>
+    }
+
+<span class="fc bfc" id="L188" title="All 4 branches covered.">    if (resourceKeys.containsKey(CATALOG) &amp;&amp; resourceKeys.containsKey(SCHEMA)) {</span>
+<span class="fc" id="L189">      String fullName = resourceKeys.get(CATALOG) + &quot;.&quot; + resourceKeys.get(SCHEMA);</span>
+<span class="fc" id="L190">      SchemaInfo schema = schemaRepository.getSchema(fullName);</span>
+<span class="fc" id="L191">      resourceIds.put(SCHEMA, UUID.fromString(schema.getSchemaId()));</span>
+    }
+
+    // if only SCHEMA is specified, assuming its value is a full schema name (including catalog)
+<span class="fc bfc" id="L195" title="All 4 branches covered.">    if (!resourceKeys.containsKey(CATALOG) &amp;&amp; resourceKeys.containsKey(SCHEMA)) {</span>
+<span class="fc" id="L196">      String fullName = (String) resourceKeys.get(SCHEMA);</span>
+<span class="fc" id="L197">      SchemaInfo schema = schemaRepository.getSchema(fullName);</span>
+<span class="fc" id="L198">      CatalogInfo catalog = catalogRepository.getCatalog(schema.getCatalogName());</span>
+<span class="fc" id="L199">      resourceIds.put(SCHEMA, UUID.fromString(schema.getSchemaId()));</span>
+<span class="fc" id="L200">      resourceIds.put(CATALOG, UUID.fromString(catalog.getId()));</span>
+    }
+
+<span class="fc bfc" id="L203" title="All 2 branches covered.">    if (resourceKeys.containsKey(CATALOG)) {</span>
+<span class="fc" id="L204">      String fullName = (String) resourceKeys.get(CATALOG);</span>
+<span class="fc" id="L205">      CatalogInfo catalog = catalogRepository.getCatalog(fullName);</span>
+<span class="fc" id="L206">      resourceIds.put(CATALOG, UUID.fromString(catalog.getId()));</span>
+    }
+
+<span class="pc bpc" id="L209" title="1 of 2 branches missed.">    if (resourceKeys.containsKey(METASTORE)) {</span>
+<span class="fc" id="L210">      resourceIds.put(METASTORE, metastoreRepository.getMetastoreId());</span>
+    }
+
+<span class="fc" id="L213">    return resourceIds;</span>
+  }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.7.202105040129</span></div></body></html>

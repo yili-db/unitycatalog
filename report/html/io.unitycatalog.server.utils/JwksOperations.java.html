@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="utf-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>JwksOperations.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=2;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Jacoco Coverage Report</a> &gt; <a href="index.source.html" class="el_package">io.unitycatalog.server.utils</a> &gt; <span class="el_source">JwksOperations.java</span></div><h1>JwksOperations.java</h1><pre class="source lang-java linenums">package io.unitycatalog.server.utils;
+
+import static io.unitycatalog.server.security.SecurityContext.Issuers.INTERNAL;
+
+import com.auth0.jwk.Jwk;
+import com.auth0.jwk.JwkProvider;
+import com.auth0.jwk.JwkProviderBuilder;
+import com.auth0.jwt.JWT;
+import com.auth0.jwt.JWTVerifier;
+import com.auth0.jwt.algorithms.Algorithm;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.linecorp.armeria.client.WebClient;
+import io.unitycatalog.server.exception.ErrorCode;
+import io.unitycatalog.server.exception.OAuthInvalidClientException;
+import io.unitycatalog.server.exception.OAuthInvalidRequestException;
+import io.unitycatalog.server.security.SecurityContext;
+import java.net.URI;
+import java.nio.file.Path;
+import java.security.interfaces.RSAPublicKey;
+import java.util.Map;
+import lombok.SneakyThrows;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+public class JwksOperations {
+
+<span class="fc" id="L28">  private final WebClient webClient = WebClient.builder().build();</span>
+<span class="fc" id="L29">  private static final ObjectMapper mapper = new ObjectMapper();</span>
+  private final SecurityContext securityContext;
+
+<span class="fc" id="L32">  private static final Logger LOGGER = LoggerFactory.getLogger(JwksOperations.class);</span>
+
+<span class="fc" id="L34">  public JwksOperations(SecurityContext securityContext) {</span>
+<span class="fc" id="L35">    this.securityContext = securityContext;</span>
+<span class="fc" id="L36">  }</span>
+
+<span class="nc" id="L38">  @SneakyThrows</span>
+  public JWTVerifier verifierForIssuerAndKey(String issuer, String keyId) {
+<span class="fc" id="L40">    JwkProvider jwkProvider = loadJwkProvider(issuer);</span>
+<span class="fc" id="L41">    Jwk jwk = jwkProvider.get(keyId);</span>
+
+<span class="pc bpc" id="L43" title="1 of 2 branches missed.">    if (!&quot;RSA&quot;.equalsIgnoreCase(jwk.getPublicKey().getAlgorithm())) {</span>
+<span class="nc" id="L44">      throw new OAuthInvalidRequestException(ErrorCode.ABORTED,</span>
+<span class="nc" id="L45">          String.format(&quot;Invalid algorithm '%s' for issuer '%s'&quot;,</span>
+<span class="nc" id="L46">              jwk.getPublicKey().getAlgorithm(), issuer));</span>
+    }
+
+<span class="fc" id="L49">    Algorithm algorithm = algorithmForJwk(jwk);</span>
+
+<span class="fc" id="L51">    return JWT.require(algorithm).withIssuer(issuer).build();</span>
+  }
+
+<span class="nc" id="L54">  @SneakyThrows</span>
+  private Algorithm algorithmForJwk(Jwk jwk) {
+<span class="pc bpc" id="L56" title="3 of 4 branches missed.">    return switch (jwk.getAlgorithm()) {</span>
+<span class="nc" id="L57">      case &quot;RS256&quot; -&gt; Algorithm.RSA256((RSAPublicKey) jwk.getPublicKey(), null);</span>
+<span class="nc" id="L58">      case &quot;RS384&quot; -&gt; Algorithm.RSA384((RSAPublicKey) jwk.getPublicKey(), null);</span>
+<span class="fc" id="L59">      case &quot;RS512&quot; -&gt; Algorithm.RSA512((RSAPublicKey) jwk.getPublicKey(), null);</span>
+<span class="nc" id="L60">      default -&gt; throw new OAuthInvalidClientException(ErrorCode.ABORTED,</span>
+<span class="nc" id="L61">          String.format(&quot;Unsupported algorithm: %s&quot;, jwk.getAlgorithm()));</span>
+    };
+  }
+
+<span class="nc" id="L65">  @SneakyThrows</span>
+  public JwkProvider loadJwkProvider(String issuer) {
+<span class="fc" id="L67">    LOGGER.debug(&quot;Loading JwkProvider for issuer '{}'&quot;, issuer);</span>
+<span class="pc bpc" id="L68" title="1 of 2 branches missed.">    if (issuer.equals(INTERNAL)) {</span>
+      // Return our own &quot;self-signed&quot; provider, for easy mode.
+      // TODO: This should be configurable
+<span class="fc" id="L71">      Path certsFile = securityContext.getCertsFile();</span>
+<span class="fc" id="L72">      return new JwkProviderBuilder(certsFile.toUri().toURL()).cached(false).build();</span>
+    } else {
+      // Get the JWKS from the OIDC well-known location described here
+      // https://openid.net/specs/openid-connect-discovery-1_0-21.html#ProviderConfig
+
+<span class="nc bnc" id="L77" title="All 4 branches missed.">      if (!issuer.startsWith(&quot;https://&quot;) &amp;&amp; !issuer.startsWith(&quot;http://&quot;)) {</span>
+<span class="nc" id="L78">        issuer = &quot;https://&quot; + issuer;</span>
+      }
+
+<span class="nc" id="L81">      String wellKnownConfigUrl = issuer;</span>
+
+<span class="nc bnc" id="L83" title="All 2 branches missed.">      if (!wellKnownConfigUrl.endsWith(&quot;/&quot;)) {</span>
+<span class="nc" id="L84">        wellKnownConfigUrl += &quot;/&quot;;</span>
+      }
+
+<span class="nc" id="L87">      var path = wellKnownConfigUrl + &quot;.well-known/openid-configuration&quot;;</span>
+<span class="nc" id="L88">      LOGGER.debug(&quot;path: {}&quot;, path);</span>
+
+<span class="nc" id="L90">      String response = webClient</span>
+<span class="nc" id="L91">          .get(path)</span>
+<span class="nc" id="L92">          .aggregate()</span>
+<span class="nc" id="L93">          .join()</span>
+<span class="nc" id="L94">          .contentUtf8();</span>
+
+      // TODO: We should cache this. No need to fetch it each time.
+<span class="nc" id="L97">      Map&lt;String, Object&gt; configMap = mapper.readValue(response, new TypeReference&lt;&gt;() {});</span>
+
+<span class="nc bnc" id="L99" title="All 4 branches missed.">      if (configMap == null || configMap.isEmpty()) {</span>
+<span class="nc" id="L100">        throw new OAuthInvalidRequestException(ErrorCode.ABORTED,</span>
+            &quot;Could not get issuer configuration&quot;);
+      }
+
+<span class="nc" id="L104">      String configIssuer = (String) configMap.get(&quot;issuer&quot;);</span>
+<span class="nc" id="L105">      String configJwksUri = (String) configMap.get(&quot;jwks_uri&quot;);</span>
+
+<span class="nc bnc" id="L107" title="All 2 branches missed.">      if (!configIssuer.equals(issuer)) {</span>
+<span class="nc" id="L108">        throw new OAuthInvalidRequestException(ErrorCode.ABORTED,</span>
+            &quot;Issuer doesn't match configuration&quot;);
+      }
+
+<span class="nc bnc" id="L112" title="All 2 branches missed.">      if (configJwksUri == null) {</span>
+<span class="nc" id="L113">        throw new OAuthInvalidRequestException(ErrorCode.ABORTED, &quot;JWKS configuration missing&quot;);</span>
+      }
+
+      // TODO: Or maybe just cache the provider for reuse.
+<span class="nc" id="L117">      return new JwkProviderBuilder(URI.create(configJwksUri).toURL()).cached(false).build();</span>
+    }
+  }
+}
+
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.7.202105040129</span></div></body></html>

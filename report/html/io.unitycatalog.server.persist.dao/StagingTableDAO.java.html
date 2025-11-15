@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="utf-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>StagingTableDAO.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=2;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Jacoco Coverage Report</a> &gt; <a href="index.source.html" class="el_package">io.unitycatalog.server.persist.dao</a> &gt; <span class="el_source">StagingTableDAO.java</span></div><h1>StagingTableDAO.java</h1><pre class="source lang-java linenums">package io.unitycatalog.server.persist.dao;
+
+import io.unitycatalog.server.model.StagingTableInfo;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.Index;
+import jakarta.persistence.Table;
+import jakarta.persistence.Temporal;
+import jakarta.persistence.TemporalType;
+import java.util.Date;
+import java.util.UUID;
+import lombok.AllArgsConstructor;
+import lombok.EqualsAndHashCode;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import lombok.Setter;
+import lombok.experimental.SuperBuilder;
+
+// Hibernate annotations
+@Entity
+@Table(
+    name = &quot;uc_staging_tables&quot;,
+    indexes = {
+      @Index(name = &quot;idx_name&quot;, columnList = &quot;name&quot;),
+      @Index(name = &quot;idx_staging_location&quot;, columnList = &quot;staging_location&quot;),
+    })
+// Lombok annotations
+@Getter
+<span class="fc" id="L29">@Setter</span>
+<span class="fc" id="L30">@NoArgsConstructor</span>
+<span class="nc" id="L31">@AllArgsConstructor</span>
+<span class="nc bnc" id="L32" title="All 72 branches missed.">@EqualsAndHashCode(callSuper = true)</span>
+<span class="nc" id="L33">@SuperBuilder</span>
+public class StagingTableDAO extends IdentifiableDAO {
+  @Column(name = &quot;schema_id&quot;)
+<span class="fc" id="L36">  private UUID schemaId;</span>
+
+  @Column(name = &quot;staging_location&quot;, length = 2048, nullable = false)
+<span class="fc" id="L39">  private String stagingLocation;</span>
+
+  @Column(name = &quot;created_at&quot;, nullable = false)
+<span class="nc" id="L42">  private Date createdAt;</span>
+
+  @Column(name = &quot;created_by&quot;)
+<span class="fc" id="L45">  private String createdBy;</span>
+
+  @Column(name = &quot;accessed_at&quot;, nullable = false)
+<span class="nc" id="L48">  private Date accessedAt;</span>
+
+  @Column(name = &quot;stage_committed&quot;, nullable = false)
+<span class="fc" id="L51">  private boolean stageCommitted;</span>
+
+  @Column(name = &quot;stage_committed_at&quot;)
+<span class="nc" id="L54">  private Date stageCommittedAt;</span>
+
+  @Column(name = &quot;purge_state&quot;, nullable = false)
+<span class="nc" id="L57">  private short purgeState;</span>
+
+  @Column(name = &quot;num_cleanup_retries&quot;, nullable = false)
+<span class="nc" id="L60">  private short numCleanupRetries;</span>
+
+  @Temporal(TemporalType.TIMESTAMP)
+  @Column(name = &quot;last_cleanup_at&quot;)
+<span class="nc" id="L64">  private Date lastCleanupAt;</span>
+
+  public StagingTableInfo toStagingTableInfo(String catalogName, String schemaName) {
+<span class="fc" id="L67">    return new StagingTableInfo()</span>
+<span class="fc" id="L68">        .id(getId().toString())</span>
+<span class="fc" id="L69">        .stagingLocation(getStagingLocation())</span>
+<span class="fc" id="L70">        .name(getName())</span>
+<span class="fc" id="L71">        .catalogName(catalogName)</span>
+<span class="fc" id="L72">        .schemaName(schemaName);</span>
+  }
+
+  public void setDefaultFields() {
+<span class="fc" id="L76">    Date now = new Date();</span>
+<span class="fc" id="L77">    setCreatedAt(now); // Assuming current date for creation</span>
+<span class="fc" id="L78">    setAccessedAt(now); // Assuming current date for last access</span>
+<span class="fc" id="L79">    setStageCommitted(false);</span>
+<span class="fc" id="L80">    setStageCommittedAt(null);</span>
+<span class="fc" id="L81">    setPurgeState((short) 0);</span>
+<span class="fc" id="L82">    setNumCleanupRetries((short) 0);</span>
+<span class="fc" id="L83">    setLastCleanupAt(null);</span>
+<span class="fc" id="L84">  }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.7.202105040129</span></div></body></html>

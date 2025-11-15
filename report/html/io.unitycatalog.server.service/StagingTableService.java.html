@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>StagingTableService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=2;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Jacoco Coverage Report</a> &gt; <a href="index.source.html" class="el_package">io.unitycatalog.server.service</a> &gt; <span class="el_source">StagingTableService.java</span></div><h1>StagingTableService.java</h1><pre class="source lang-java linenums">package io.unitycatalog.server.service;
+
+import static io.unitycatalog.server.model.SecurableType.CATALOG;
+import static io.unitycatalog.server.model.SecurableType.METASTORE;
+import static io.unitycatalog.server.model.SecurableType.SCHEMA;
+
+import io.unitycatalog.server.auth.UnityCatalogAuthorizer;
+import io.unitycatalog.server.auth.annotation.AuthorizeExpression;
+import io.unitycatalog.server.auth.annotation.AuthorizeKey;
+import io.unitycatalog.server.auth.annotation.AuthorizeKeys;
+import io.unitycatalog.server.exception.GlobalExceptionHandler;
+import io.unitycatalog.server.model.CreateStagingTable;
+import io.unitycatalog.server.model.SchemaInfo;
+import io.unitycatalog.server.model.StagingTableInfo;
+import io.unitycatalog.server.persist.Repositories;
+import io.unitycatalog.server.persist.SchemaRepository;
+import io.unitycatalog.server.persist.StagingTableRepository;
+import com.linecorp.armeria.common.HttpResponse;
+import com.linecorp.armeria.server.annotation.ExceptionHandler;
+import com.linecorp.armeria.server.annotation.Post;
+
+
+<span class="pc bpc" id="L23" title="1 of 2 branches missed.">@ExceptionHandler(GlobalExceptionHandler.class)</span>
+public class StagingTableService extends AuthorizedService {
+
+  private final StagingTableRepository stagingTableRepository;
+  private final SchemaRepository schemaRepository;
+
+  public StagingTableService(UnityCatalogAuthorizer authorizer, Repositories repositories) {
+<span class="fc" id="L30">    super(authorizer, repositories.getUserRepository());</span>
+<span class="fc" id="L31">    this.stagingTableRepository = repositories.getStagingTableRepository();</span>
+<span class="fc" id="L32">    this.schemaRepository = repositories.getSchemaRepository();</span>
+<span class="fc" id="L33">  }</span>
+
+  @Post(&quot;&quot;)
+  @AuthorizeExpression(&quot;&quot;&quot;
+          (#authorizeAny(#principal, #catalog, OWNER, USE_CATALOG)
+           &amp;&amp; #authorize(#principal, #schema, OWNER)) ||
+          (#authorizeAny(#principal, #catalog, OWNER, USE_CATALOG)
+           &amp;&amp; #authorizeAll(#principal, #schema, USE_SCHEMA, CREATE_TABLE))
+      &quot;&quot;&quot;)
+  @AuthorizeKey(METASTORE)
+  public HttpResponse createStagingTable(
+      @AuthorizeKeys({
+        @AuthorizeKey(value = SCHEMA, key = &quot;schema_name&quot;),
+        @AuthorizeKey(value = CATALOG, key = &quot;catalog_name&quot;)
+      })
+      CreateStagingTable createStagingTable) {
+<span class="pc bpc" id="L49" title="2 of 4 branches missed.">    assert createStagingTable != null;</span>
+<span class="fc" id="L50">    StagingTableInfo createdStagingTable = stagingTableRepository.createStagingTable(</span>
+        createStagingTable);
+
+<span class="fc" id="L53">    SchemaInfo schemaInfo = schemaRepository.getSchema(</span>
+<span class="fc" id="L54">        createdStagingTable.getCatalogName() + &quot;.&quot; + createdStagingTable.getSchemaName());</span>
+<span class="fc" id="L55">    initializeHierarchicalAuthorization(createdStagingTable.getId(), schemaInfo.getSchemaId());</span>
+<span class="fc" id="L56">    return HttpResponse.ofJson(createdStagingTable);</span>
+  }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.7.202105040129</span></div></body></html>

@@ -1,0 +1,317 @@
+<?xml version="1.0" encoding="utf-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>PermissionService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=2;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Jacoco Coverage Report</a> &gt; <a href="index.source.html" class="el_package">io.unitycatalog.server.service</a> &gt; <span class="el_source">PermissionService.java</span></div><h1>PermissionService.java</h1><pre class="source lang-java linenums">package io.unitycatalog.server.service;
+
+import static io.unitycatalog.server.model.SecurableType.CATALOG;
+import static io.unitycatalog.server.model.SecurableType.FUNCTION;
+import static io.unitycatalog.server.model.SecurableType.METASTORE;
+import static io.unitycatalog.server.model.SecurableType.REGISTERED_MODEL;
+import static io.unitycatalog.server.model.SecurableType.SCHEMA;
+import static io.unitycatalog.server.model.SecurableType.TABLE;
+import static io.unitycatalog.server.model.SecurableType.VOLUME;
+
+import io.unitycatalog.control.model.User;
+import io.unitycatalog.server.auth.UnityCatalogAuthorizer;
+import io.unitycatalog.server.auth.annotation.AuthorizeExpression;
+import io.unitycatalog.server.auth.annotation.AuthorizeKey;
+import io.unitycatalog.server.exception.BaseException;
+import io.unitycatalog.server.exception.ErrorCode;
+import io.unitycatalog.server.exception.GlobalExceptionHandler;
+import io.unitycatalog.server.model.PermissionsChange;
+import io.unitycatalog.server.model.PermissionsList;
+import io.unitycatalog.server.model.Privilege;
+import io.unitycatalog.server.model.PrivilegeAssignment;
+import io.unitycatalog.server.model.SecurableType;
+import io.unitycatalog.server.model.UpdatePermissions;
+import io.unitycatalog.server.persist.CatalogRepository;
+import io.unitycatalog.server.persist.FunctionRepository;
+import io.unitycatalog.server.persist.MetastoreRepository;
+import io.unitycatalog.server.persist.ModelRepository;
+import io.unitycatalog.server.persist.Repositories;
+import io.unitycatalog.server.persist.SchemaRepository;
+import io.unitycatalog.server.persist.TableRepository;
+import io.unitycatalog.server.persist.UserRepository;
+import io.unitycatalog.server.persist.VolumeRepository;
+import io.unitycatalog.server.persist.model.Privileges;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
+import java.util.UUID;
+import java.util.stream.Collectors;
+import com.linecorp.armeria.common.HttpResponse;
+import com.linecorp.armeria.server.annotation.ExceptionHandler;
+import com.linecorp.armeria.server.annotation.Get;
+import com.linecorp.armeria.server.annotation.Param;
+import com.linecorp.armeria.server.annotation.Patch;
+
+@ExceptionHandler(GlobalExceptionHandler.class)
+public class PermissionService {
+
+  private final UnityCatalogAuthorizer authorizer;
+  private final MetastoreRepository metastoreRepository;
+  private final UserRepository userRepository;
+  private final CatalogRepository catalogRepository;
+  private final SchemaRepository schemaRepository;
+  private final TableRepository tableRepository;
+  private final FunctionRepository functionRepository;
+  private final VolumeRepository volumeRepository;
+  private final ModelRepository modelRepository;
+
+<span class="fc" id="L61">  public PermissionService(UnityCatalogAuthorizer authorizer, Repositories repositories) {</span>
+<span class="fc" id="L62">    this.authorizer = authorizer;</span>
+<span class="fc" id="L63">    this.metastoreRepository = repositories.getMetastoreRepository();</span>
+<span class="fc" id="L64">    this.userRepository = repositories.getUserRepository();</span>
+<span class="fc" id="L65">    this.catalogRepository = repositories.getCatalogRepository();</span>
+<span class="fc" id="L66">    this.schemaRepository = repositories.getSchemaRepository();</span>
+<span class="fc" id="L67">    this.tableRepository = repositories.getTableRepository();</span>
+<span class="fc" id="L68">    this.functionRepository = repositories.getFunctionRepository();</span>
+<span class="fc" id="L69">    this.volumeRepository = repositories.getVolumeRepository();</span>
+<span class="fc" id="L70">    this.modelRepository = repositories.getModelRepository();</span>
+<span class="fc" id="L71">  }</span>
+
+  // TODO: Refactor these endpoints to use a common method with dynamic resource id lookup
+  @Get(&quot;/metastore/{name}&quot;)
+  public HttpResponse getMetastoreAuthorization(
+      @Param(&quot;name&quot;) String name) {
+<span class="nc" id="L77">    return getAuthorization(METASTORE, name);</span>
+  }
+
+  @Get(&quot;/catalog/{name}&quot;)
+  public HttpResponse getCatalogAuthorization(
+      @Param(&quot;name&quot;) String name) {
+<span class="nc" id="L83">    return getAuthorization(CATALOG, name);</span>
+  }
+
+  @Get(&quot;/schema/{name}&quot;)
+  public HttpResponse getSchemaAuthorization(
+      @Param(&quot;name&quot;) String name) {
+<span class="nc" id="L89">    return getAuthorization(SCHEMA, name);</span>
+  }
+
+  @Get(&quot;/table/{name}&quot;)
+  public HttpResponse getTableAuthorization(
+      @Param(&quot;name&quot;) String name) {
+<span class="nc" id="L95">    return getAuthorization(TABLE, name);</span>
+  }
+
+  @Get(&quot;/function/{name}&quot;)
+  public HttpResponse getFunctionAuthorization(
+      @Param(&quot;name&quot;) String name) {
+<span class="nc" id="L101">    return getAuthorization(FUNCTION, name);</span>
+  }
+
+  @Get(&quot;/volume/{name}&quot;)
+  public HttpResponse getVolumeAuthorization(
+      @Param(&quot;name&quot;) String name) {
+<span class="nc" id="L107">    return getAuthorization(VOLUME, name);</span>
+  }
+
+  @Get(&quot;/registered_model/{name}&quot;)
+  public HttpResponse getRegisteredModelAuthorization(
+      @Param(&quot;name&quot;) String name) {
+<span class="nc" id="L113">    return getAuthorization(REGISTERED_MODEL, name);</span>
+  }
+
+  private HttpResponse getAuthorization(
+      SecurableType securableType, String name) {
+
+    // Only show permissions for the authenticated identity unless they are the owner
+    // or if the authenticated identity is the owner of the parent resource(s)
+    // of the resource or the metastore itself.
+
+<span class="nc" id="L123">    UUID resourceId = getResourceId(securableType, name);</span>
+<span class="nc" id="L124">    UUID principalId = userRepository.findPrincipalId();</span>
+
+    // TODO: could be more explicit about the hierarchy here.
+    // For now this is sufficient in that it covers owner on resources parentage.
+<span class="nc" id="L128">    UUID parentId = authorizer.getHierarchyParent(resourceId);</span>
+<span class="nc bnc" id="L129" title="All 2 branches missed.">    UUID grandparentId = (parentId != null) ? authorizer.getHierarchyParent(parentId) : null;</span>
+
+<span class="nc" id="L131">    boolean isOwner =</span>
+<span class="nc bnc" id="L132" title="All 2 branches missed.">        authorizer.authorize(principalId, metastoreRepository.getMetastoreId(), Privileges.OWNER)</span>
+<span class="nc bnc" id="L133" title="All 4 branches missed.">            || authorizer.authorize(principalId, resourceId, Privileges.OWNER)</span>
+<span class="nc bnc" id="L134" title="All 4 branches missed.">            || (parentId != null &amp;&amp; authorizer.authorize(principalId, parentId, Privileges.OWNER))</span>
+            || (grandparentId != null
+<span class="nc bnc" id="L136" title="All 2 branches missed.">                &amp;&amp; authorizer.authorize(principalId, grandparentId, Privileges.OWNER));</span>
+
+    Map&lt;UUID, List&lt;Privileges&gt;&gt; authorizations =
+<span class="nc bnc" id="L139" title="All 2 branches missed.">        isOwner</span>
+<span class="nc" id="L140">            ? authorizer.listAuthorizations(resourceId)</span>
+<span class="nc" id="L141">            : Map.of(principalId, authorizer.listAuthorizations(principalId, resourceId));</span>
+
+<span class="nc" id="L143">    List&lt;PrivilegeAssignment&gt; privilegeAssignments =</span>
+<span class="nc" id="L144">        authorizations.entrySet().stream()</span>
+<span class="nc" id="L145">            .map(</span>
+                entry -&gt; {
+                  List&lt;Privilege&gt; privileges =
+                      entry.getValue().stream()
+                          .&lt;Privilege&gt;map(Privileges::toPrivilege)
+                          // mapping to Privilege may result in nulls since Privilege is a subset of
+                          // Privileges, so filter them out.
+                          .filter(Objects::nonNull)
+                          .toList();
+                  return new PrivilegeAssignment()
+                      .principal(userRepository.getUser(entry.getKey().toString()).getEmail())
+                      .privileges(privileges);
+                })
+<span class="nc" id="L158">            .filter(assignment -&gt; !assignment.getPrivileges().isEmpty())</span>
+<span class="nc" id="L159">            .collect(Collectors.toList());</span>
+
+<span class="nc" id="L161">    return HttpResponse.ofJson(new PermissionsList().privilegeAssignments(privilegeAssignments));</span>
+  }
+
+  // TODO: Refactor these endpoints to use a common method with dynamic resource id lookup
+  @Patch(&quot;/metastore/{name}&quot;)
+  @AuthorizeExpression(&quot;#authorize(#principal, #metastore, OWNER)&quot;)
+  @AuthorizeKey(METASTORE)
+  public HttpResponse updateMetastoreAuthorization(
+      @Param(&quot;name&quot;) String name, UpdatePermissions request) {
+<span class="fc" id="L170">    return updateAuthorization(METASTORE, name, request);</span>
+  }
+
+  @Patch(&quot;/catalog/{name}&quot;)
+  @AuthorizeExpression(
+      &quot;#authorize(#principal, #metastore, OWNER) || #authorize(#principal, #catalog, OWNER)&quot;)
+  @AuthorizeKey(METASTORE)
+  public HttpResponse updateCatalogAuthorization(
+      @Param(&quot;name&quot;) @AuthorizeKey(CATALOG) String name, UpdatePermissions request) {
+<span class="fc" id="L179">    return updateAuthorization(CATALOG, name, request);</span>
+  }
+
+  @Patch(&quot;/schema/{name}&quot;)
+  @AuthorizeExpression(&quot;&quot;&quot;
+      #authorize(#principal, #metastore, OWNER) ||
+      #authorize(#principal, #catalog, OWNER) ||
+      (#authorize(#principal, #schema, OWNER) &amp;&amp; #authorize(#principal, #catalog, USE_CATALOG))
+      &quot;&quot;&quot;)
+  @AuthorizeKey(METASTORE)
+  public HttpResponse updateSchemaAuthorization(
+      @Param(&quot;name&quot;) @AuthorizeKey(SCHEMA) String name, UpdatePermissions request) {
+<span class="fc" id="L191">    return updateAuthorization(SCHEMA, name, request);</span>
+  }
+
+  @Patch(&quot;/table/{name}&quot;)
+  @AuthorizeExpression(&quot;&quot;&quot;
+      #authorize(#principal, #metastore, OWNER) ||
+      #authorize(#principal, #catalog, OWNER) ||
+      (#authorize(#principal, #catalog, USE_CATALOG) &amp;&amp; #authorize(#principal, #schema, OWNER)) ||
+      (#authorize(#principal, #catalog, USE_CATALOG) &amp;&amp;
+          #authorize(#principal, #schema, USE_SCHEMA) &amp;&amp;
+          #authorize(#principal, #table, OWNER))
+      &quot;&quot;&quot;)
+  @AuthorizeKey(METASTORE)
+  public HttpResponse updateTableAuthorization(
+      @Param(&quot;name&quot;) @AuthorizeKey(TABLE) String name, UpdatePermissions request) {
+<span class="nc" id="L206">    return updateAuthorization(TABLE, name, request);</span>
+  }
+
+  @Patch(&quot;/function/{name}&quot;)
+  @AuthorizeExpression(&quot;&quot;&quot;
+      #authorize(#principal, #metastore, OWNER) ||
+      #authorize(#principal, #catalog, OWNER) ||
+      (#authorize(#principal, #catalog, USE_CATALOG) &amp;&amp; #authorize(#principal, #schema, OWNER)) ||
+      (#authorize(#principal, #catalog, USE_CATALOG) &amp;&amp;
+          #authorize(#principal, #schema, USE_SCHEMA) &amp;&amp;
+          #authorize(#principal, #function, OWNER))
+      &quot;&quot;&quot;)
+  @AuthorizeKey(METASTORE)
+  public HttpResponse updateFunctionAuthorization(
+      @Param(&quot;name&quot;) @AuthorizeKey(FUNCTION) String name, UpdatePermissions request) {
+<span class="nc" id="L221">    return updateAuthorization(FUNCTION, name, request);</span>
+  }
+
+  @Patch(&quot;/volume/{name}&quot;)
+  @AuthorizeExpression(&quot;&quot;&quot;
+      #authorize(#principal, #metastore, OWNER) ||
+      #authorize(#principal, #catalog, OWNER) ||
+      (#authorize(#principal, #catalog, USE_CATALOG) &amp;&amp; #authorize(#principal, #schema, OWNER)) ||
+      (#authorize(#principal, #catalog, USE_CATALOG) &amp;&amp;
+          #authorize(#principal, #schema, USE_SCHEMA) &amp;&amp;
+          #authorize(#principal, #volume, OWNER))
+      &quot;&quot;&quot;)
+  @AuthorizeKey(METASTORE)
+  public HttpResponse updateVolumeAuthorization(
+      @Param(&quot;name&quot;) @AuthorizeKey(VOLUME) String name, UpdatePermissions request) {
+<span class="nc" id="L236">    return updateAuthorization(VOLUME, name, request);</span>
+  }
+
+  @Patch(&quot;/registered_model/{name}&quot;)
+  @AuthorizeExpression(
+      &quot;#authorize(#principal, #metastore, OWNER) || #authorize(#principal, #registered_model, OWNER)&quot;)
+  @AuthorizeKey(METASTORE)
+  public HttpResponse updateRegisteredModelAuthorization(
+      @Param(&quot;name&quot;) @AuthorizeKey(REGISTERED_MODEL) String name, UpdatePermissions request) {
+<span class="nc" id="L245">    return updateAuthorization(REGISTERED_MODEL, name, request);</span>
+  }
+
+  private HttpResponse updateAuthorization(
+      SecurableType securableType, String name, UpdatePermissions request) {
+<span class="fc" id="L250">    UUID resourceId = getResourceId(securableType, name);</span>
+<span class="fc" id="L251">    List&lt;PermissionsChange&gt; changes = request.getChanges();</span>
+<span class="fc" id="L252">    Set&lt;UUID&gt; principalIds = new HashSet&lt;&gt;();</span>
+<span class="fc" id="L253">    changes.forEach(</span>
+        change -&gt; {
+          String principal = change.getPrincipal();
+          User user = userRepository.getUserByEmail(principal);
+          UUID principalId = UUID.fromString(Objects.requireNonNull(user.getId()));
+          principalIds.add(principalId);
+          change
+              .getAdd()
+              .forEach(
+                  privilege -&gt;
+                      //  Privileges should always be a superset of Privilege so this _should_
+                      // always be non-null but let's be safe anyway.
+                      Optional.ofNullable(Privileges.fromPrivilege(privilege))
+                          .map(p -&gt; authorizer.grantAuthorization(principalId, resourceId, p)));
+          change
+              .getRemove()
+              .forEach(
+                  privilege -&gt;
+                      //  Privileges should always be a superset of Privilege so this _should_
+                      // always be non-null but let's be safe anyway.
+                      Optional.ofNullable(Privileges.fromPrivilege(privilege))
+                          .map(p -&gt; authorizer.revokeAuthorization(principalId, resourceId, p)));
+        });
+
+<span class="fc" id="L277">    Map&lt;UUID, List&lt;Privileges&gt;&gt; authorizations = authorizer.listAuthorizations(resourceId);</span>
+<span class="fc" id="L278">    List&lt;PrivilegeAssignment&gt; privilegeAssignments =</span>
+<span class="fc" id="L279">        authorizations.entrySet().stream()</span>
+<span class="fc" id="L280">            .filter(entry -&gt; principalIds.contains(entry.getKey()))</span>
+<span class="fc" id="L281">            .map(</span>
+                entry -&gt; {
+                  List&lt;Privilege&gt; privileges =
+                      entry.getValue().stream()
+                          .&lt;Privilege&gt;map(Privileges::toPrivilege)
+                          // mapping to Privilege may result in nulls since Privilege is a subset of
+                          // Privileges, so filter them out.
+                          .filter(Objects::nonNull)
+                          .toList();
+                  return new PrivilegeAssignment()
+                      .principal(userRepository.getUser(entry.getKey().toString()).getEmail())
+                      .privileges(privileges);
+                })
+<span class="fc" id="L294">            .filter(assignment -&gt; !assignment.getPrivileges().isEmpty())</span>
+<span class="fc" id="L295">            .collect(Collectors.toList());</span>
+
+<span class="fc" id="L297">    return HttpResponse.ofJson(new PermissionsList().privilegeAssignments(privilegeAssignments));</span>
+  }
+
+  private UUID getResourceId(SecurableType securableType, String name) {
+
+<span class="pc bpc" id="L302" title="5 of 8 branches missed.">    String resourceId = switch (securableType) {</span>
+<span class="fc" id="L303">      case METASTORE -&gt; metastoreRepository.getMetastoreId().toString();</span>
+<span class="fc" id="L304">      case CATALOG -&gt; catalogRepository.getCatalog(name).getId();</span>
+<span class="fc" id="L305">      case SCHEMA -&gt; schemaRepository.getSchema(name).getSchemaId();</span>
+<span class="nc" id="L306">      case TABLE -&gt; tableRepository.getTable(name).getTableId();</span>
+<span class="nc" id="L307">      case FUNCTION -&gt; functionRepository.getFunction(name).getFunctionId();</span>
+<span class="nc" id="L308">      case VOLUME -&gt; volumeRepository.getVolume(name).getVolumeId();</span>
+<span class="nc" id="L309">      case REGISTERED_MODEL -&gt; modelRepository.getRegisteredModel(name).getId();</span>
+<span class="pc" id="L310">      default -&gt; throw new BaseException(ErrorCode.FAILED_PRECONDITION, &quot;Unknown resource type&quot;);</span>
+    };
+
+<span class="fc" id="L313">    return UUID.fromString(Objects.requireNonNull(resourceId));</span>
+  }
+}
+
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.7.202105040129</span></div></body></html>

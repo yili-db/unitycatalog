@@ -1,0 +1,408 @@
+<?xml version="1.0" encoding="utf-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>UnityCatalogServer.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=2;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Jacoco Coverage Report</a> &gt; <a href="index.source.html" class="el_package">io.unitycatalog.server</a> &gt; <span class="el_source">UnityCatalogServer.java</span></div><h1>UnityCatalogServer.java</h1><pre class="source lang-java linenums">package io.unitycatalog.server;
+
+import static io.unitycatalog.server.security.SecurityContext.Issuers.INTERNAL;
+
+import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.databind.json.JsonMapper;
+import com.linecorp.armeria.common.HttpResponse;
+import com.linecorp.armeria.server.Server;
+import com.linecorp.armeria.server.ServerBuilder;
+import com.linecorp.armeria.server.annotation.JacksonRequestConverterFunction;
+import com.linecorp.armeria.server.annotation.JacksonResponseConverterFunction;
+import com.linecorp.armeria.server.docs.DocService;
+import io.unitycatalog.server.auth.AllowingAuthorizer;
+import io.unitycatalog.server.auth.JCasbinAuthorizer;
+import io.unitycatalog.server.auth.UnityCatalogAuthorizer;
+import io.unitycatalog.server.auth.decorator.UnityAccessDecorator;
+import io.unitycatalog.server.auth.decorator.UnityAccessUtil;
+import io.unitycatalog.server.exception.BaseException;
+import io.unitycatalog.server.exception.ErrorCode;
+import io.unitycatalog.server.exception.ExceptionHandlingDecorator;
+import io.unitycatalog.server.exception.GlobalExceptionHandler;
+import io.unitycatalog.server.persist.Repositories;
+import io.unitycatalog.server.persist.utils.HibernateConfigurator;
+import io.unitycatalog.server.security.SecurityConfiguration;
+import io.unitycatalog.server.security.SecurityContext;
+import io.unitycatalog.server.service.AuthDecorator;
+import io.unitycatalog.server.service.AuthService;
+import io.unitycatalog.server.service.CatalogService;
+import io.unitycatalog.server.service.CredentialService;
+import io.unitycatalog.server.service.DeltaCommitsService;
+import io.unitycatalog.server.service.ExternalLocationService;
+import io.unitycatalog.server.service.FunctionService;
+import io.unitycatalog.server.service.IcebergRestCatalogService;
+import io.unitycatalog.server.service.MetastoreService;
+import io.unitycatalog.server.service.ModelService;
+import io.unitycatalog.server.service.PermissionService;
+import io.unitycatalog.server.service.SchemaService;
+import io.unitycatalog.server.service.Scim2SelfService;
+import io.unitycatalog.server.service.Scim2UserService;
+import io.unitycatalog.server.service.StagingTableService;
+import io.unitycatalog.server.service.TableService;
+import io.unitycatalog.server.service.TemporaryModelVersionCredentialsService;
+import io.unitycatalog.server.service.TemporaryPathCredentialsService;
+import io.unitycatalog.server.service.TemporaryTableCredentialsService;
+import io.unitycatalog.server.service.TemporaryVolumeCredentialsService;
+import io.unitycatalog.server.service.VolumeService;
+import io.unitycatalog.server.service.credential.CloudCredentialVendor;
+import io.unitycatalog.server.service.credential.aws.AwsCredentialVendor;
+import io.unitycatalog.server.service.credential.azure.AzureCredentialVendor;
+import io.unitycatalog.server.service.credential.gcp.GcpCredentialVendor;
+import io.unitycatalog.server.service.iceberg.FileIOFactory;
+import io.unitycatalog.server.service.iceberg.MetadataService;
+import io.unitycatalog.server.service.iceberg.TableConfigService;
+import io.unitycatalog.server.utils.OptionParser;
+import io.unitycatalog.server.utils.RESTObjectMapper;
+import io.unitycatalog.server.utils.ServerProperties;
+import io.unitycatalog.server.utils.VersionUtils;
+import io.vertx.core.Verticle;
+import io.vertx.core.Vertx;
+import java.nio.file.Path;
+import org.apache.logging.log4j.core.config.Configurator;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+public class UnityCatalogServer {
+<span class="fc" id="L69">  private static final Logger LOGGER = LoggerFactory.getLogger(UnityCatalogServer.class);</span>
+  private static final String BASE_PATH = &quot;/api/2.1/unity-catalog/&quot;;
+  private static final String CONTROL_PATH = &quot;/api/1.0/unity-control/&quot;;
+  private static final int DEFAULT_PORT = 8080;
+  public static final String SERVER_PROPERTIES_FILE = &quot;etc/conf/server.properties&quot;;
+  private final Server server;
+  private final ServerProperties serverProperties;
+  private final SecurityContext securityContext;
+
+  static {
+<span class="fc" id="L79">    System.setProperty(&quot;log4j.configurationFile&quot;, &quot;etc/conf/server.log4j2.properties&quot;);</span>
+<span class="fc" id="L80">    Configurator.initialize(null, &quot;etc/conf/server.log4j2.properties&quot;);</span>
+<span class="fc" id="L81">  }</span>
+
+  public UnityCatalogServer() {
+<span class="nc" id="L84">    this(UnityCatalogServer.builder());</span>
+<span class="nc" id="L85">  }</span>
+
+<span class="fc" id="L87">  private UnityCatalogServer(UnityCatalogServer.Builder unityCatalogServerBuilder) {</span>
+<span class="fc" id="L88">    setDefaults(unityCatalogServerBuilder);</span>
+<span class="fc" id="L89">    Path configurationFolder = Path.of(&quot;etc&quot;, &quot;conf&quot;);</span>
+<span class="fc" id="L90">    SecurityConfiguration securityConfiguration = new SecurityConfiguration(configurationFolder);</span>
+
+<span class="fc" id="L92">    this.securityContext =</span>
+        new SecurityContext(configurationFolder, securityConfiguration, &quot;server&quot;, INTERNAL);
+<span class="fc" id="L94">    this.serverProperties = unityCatalogServerBuilder.serverProperties;</span>
+<span class="fc" id="L95">    this.server = initializeServer(unityCatalogServerBuilder);</span>
+<span class="fc" id="L96">  }</span>
+
+  private void setDefaults(UnityCatalogServer.Builder unityCatalogServerBuilder) {
+<span class="pc bpc" id="L99" title="1 of 2 branches missed.">    if (unityCatalogServerBuilder.port == 0) {</span>
+<span class="nc" id="L100">      unityCatalogServerBuilder.port(DEFAULT_PORT);</span>
+    }
+<span class="pc bpc" id="L102" title="1 of 2 branches missed.">    if (unityCatalogServerBuilder.serverProperties == null) {</span>
+<span class="nc" id="L103">      unityCatalogServerBuilder.serverProperties(new ServerProperties(SERVER_PROPERTIES_FILE));</span>
+    }
+<span class="fc bfc" id="L105" title="All 2 branches covered.">    if (unityCatalogServerBuilder.cloudCredentialVendor == null) {</span>
+<span class="fc" id="L106">      AwsCredentialVendor awsCredentialVendor =</span>
+          new AwsCredentialVendor(unityCatalogServerBuilder.serverProperties);
+<span class="fc" id="L108">      AzureCredentialVendor azureCredentialVendor =</span>
+          new AzureCredentialVendor(unityCatalogServerBuilder.serverProperties);
+<span class="fc" id="L110">      GcpCredentialVendor gcpCredentialVendor =</span>
+          new GcpCredentialVendor(unityCatalogServerBuilder.serverProperties);
+<span class="fc" id="L112">      CloudCredentialVendor cloudCredentialVendor =</span>
+          new CloudCredentialVendor(
+              awsCredentialVendor, azureCredentialVendor, gcpCredentialVendor);
+<span class="fc" id="L115">      unityCatalogServerBuilder.credentialOperations(cloudCredentialVendor);</span>
+    }
+<span class="fc" id="L117">  }</span>
+
+  private Server initializeServer(UnityCatalogServer.Builder unityCatalogServerBuilder) {
+    ServerBuilder armeriaServerBuilder =
+<span class="fc" id="L121">        Server.builder()</span>
+<span class="fc" id="L122">            .http(unityCatalogServerBuilder.port)</span>
+<span class="fc" id="L123">            .serviceUnder(&quot;/docs&quot;, new DocService());</span>
+
+    // Init hibernate
+<span class="fc" id="L126">    HibernateConfigurator hibernateConfigurator =</span>
+        new HibernateConfigurator(unityCatalogServerBuilder.serverProperties);
+    // Init all repositories
+<span class="fc" id="L129">    Repositories repositories =</span>
+<span class="fc" id="L130">        new Repositories(hibernateConfigurator.getSessionFactory(), serverProperties);</span>
+    // Init metastore
+<span class="fc" id="L132">    repositories.getMetastoreRepository().initMetastoreIfNeeded();</span>
+    // Init authorizer
+<span class="fc" id="L134">    UnityCatalogAuthorizer authorizer =</span>
+<span class="fc" id="L135">        initializeAuthorizer(</span>
+            unityCatalogServerBuilder.serverProperties, hibernateConfigurator, repositories);
+    // Init services
+<span class="fc" id="L138">    addApiServices(armeriaServerBuilder, unityCatalogServerBuilder, authorizer, repositories);</span>
+    // Init security decorators
+<span class="fc" id="L140">    addSecurityDecorators(</span>
+        armeriaServerBuilder, unityCatalogServerBuilder.serverProperties, authorizer, repositories);
+
+<span class="fc" id="L143">    return armeriaServerBuilder.build();</span>
+  }
+
+  private UnityCatalogAuthorizer initializeAuthorizer(
+      ServerProperties serverProperties,
+      HibernateConfigurator hibernateConfigurator,
+      Repositories repositories) {
+<span class="fc bfc" id="L150" title="All 2 branches covered.">    if (serverProperties.isAuthorizationEnabled()) {</span>
+      try {
+<span class="fc" id="L152">        LOGGER.info(&quot;Initializing JCasbinAuthorizer...&quot;);</span>
+<span class="fc" id="L153">        UnityCatalogAuthorizer authorizer = new JCasbinAuthorizer(hibernateConfigurator);</span>
+<span class="fc" id="L154">        new UnityAccessUtil(repositories).initializeAdmin(authorizer);</span>
+<span class="fc" id="L155">        return authorizer;</span>
+<span class="nc" id="L156">      } catch (Exception e) {</span>
+<span class="nc" id="L157">        throw new BaseException(ErrorCode.INTERNAL, &quot;Problem initializing authorizer.&quot;);</span>
+      }
+    } else {
+<span class="fc" id="L160">      LOGGER.info(&quot;Authorization disabled. Using AllowingAuthorizer.&quot;);</span>
+<span class="fc" id="L161">      return new AllowingAuthorizer();</span>
+    }
+  }
+
+  private void addApiServices(
+      ServerBuilder armeriaServerBuilder,
+      UnityCatalogServer.Builder unityCatalogServerBuilder,
+      UnityCatalogAuthorizer authorizer,
+      Repositories repositories) {
+<span class="fc" id="L170">    LOGGER.info(&quot;Adding Unity Catalog API services...&quot;);</span>
+<span class="fc" id="L171">    CloudCredentialVendor cloudCredentialVendor = unityCatalogServerBuilder.cloudCredentialVendor;</span>
+
+    // Add support for Unity Catalog APIs
+<span class="fc" id="L174">    AuthService authService =</span>
+        new AuthService(securityContext, unityCatalogServerBuilder.serverProperties, repositories);
+<span class="fc" id="L176">    PermissionService permissionService = new PermissionService(authorizer, repositories);</span>
+<span class="fc" id="L177">    Scim2UserService scim2UserService = new Scim2UserService(authorizer, repositories);</span>
+<span class="fc" id="L178">    Scim2SelfService scim2SelfService = new Scim2SelfService(authorizer, repositories);</span>
+<span class="fc" id="L179">    CatalogService catalogService = new CatalogService(authorizer, repositories);</span>
+<span class="fc" id="L180">    SchemaService schemaService = new SchemaService(authorizer, repositories);</span>
+<span class="fc" id="L181">    VolumeService volumeService = new VolumeService(authorizer, repositories);</span>
+<span class="fc" id="L182">    TableService tableService = new TableService(authorizer, repositories);</span>
+<span class="fc" id="L183">    StagingTableService stagingTableService = new StagingTableService(authorizer, repositories);</span>
+<span class="fc" id="L184">    FunctionService functionService = new FunctionService(authorizer, repositories);</span>
+<span class="fc" id="L185">    ModelService modelService = new ModelService(authorizer, repositories);</span>
+<span class="fc" id="L186">    CredentialService credentialService = new CredentialService(authorizer, repositories);</span>
+<span class="fc" id="L187">    ExternalLocationService externalLocationService =</span>
+        new ExternalLocationService(authorizer, repositories);
+<span class="fc" id="L189">    DeltaCommitsService deltaCommitsService = new DeltaCommitsService(authorizer, repositories);</span>
+<span class="fc" id="L190">    MetastoreService metastoreService = new MetastoreService(repositories);</span>
+    // TODO: combine these into a single service in a follow-up PR
+<span class="fc" id="L192">    TemporaryTableCredentialsService temporaryTableCredentialsService =</span>
+        new TemporaryTableCredentialsService(authorizer, cloudCredentialVendor, repositories);
+<span class="fc" id="L194">    TemporaryVolumeCredentialsService temporaryVolumeCredentialsService =</span>
+        new TemporaryVolumeCredentialsService(authorizer, cloudCredentialVendor, repositories);
+<span class="fc" id="L196">    TemporaryModelVersionCredentialsService temporaryModelVersionCredentialsService =</span>
+        new TemporaryModelVersionCredentialsService(
+            authorizer, cloudCredentialVendor, repositories);
+<span class="fc" id="L199">    TemporaryPathCredentialsService temporaryPathCredentialsService =</span>
+        new TemporaryPathCredentialsService(cloudCredentialVendor);
+
+<span class="fc" id="L202">    JacksonRequestConverterFunction requestConverterFunction =</span>
+        new JacksonRequestConverterFunction(
+<span class="fc" id="L204">            JsonMapper.builder()</span>
+<span class="fc" id="L205">                .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)</span>
+<span class="fc" id="L206">                .build());</span>
+<span class="fc" id="L207">    JacksonResponseConverterFunction scimResponseConverterFunction =</span>
+        new JacksonResponseConverterFunction(
+<span class="fc" id="L209">            JsonMapper.builder()</span>
+<span class="fc" id="L210">                .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)</span>
+<span class="fc" id="L211">                .serializationInclusion(JsonInclude.Include.NON_NULL)</span>
+<span class="fc" id="L212">                .build());</span>
+<span class="fc" id="L213">    armeriaServerBuilder</span>
+<span class="fc" id="L214">        .service(&quot;/&quot;, (ctx, req) -&gt; HttpResponse.of(&quot;Hello, Unity Catalog!&quot;))</span>
+<span class="fc" id="L215">        .annotatedService(CONTROL_PATH + &quot;auth&quot;, authService, requestConverterFunction)</span>
+<span class="fc" id="L216">        .annotatedService(</span>
+            CONTROL_PATH + &quot;scim2/Users&quot;,
+            scim2UserService,
+            requestConverterFunction,
+            scimResponseConverterFunction)
+<span class="fc" id="L221">        .annotatedService(</span>
+            CONTROL_PATH + &quot;scim2/Me&quot;,
+            scim2SelfService,
+            requestConverterFunction,
+            scimResponseConverterFunction)
+<span class="fc" id="L226">        .annotatedService(BASE_PATH + &quot;permissions&quot;, permissionService)</span>
+<span class="fc" id="L227">        .annotatedService(BASE_PATH + &quot;catalogs&quot;, catalogService, requestConverterFunction)</span>
+<span class="fc" id="L228">        .annotatedService(BASE_PATH + &quot;schemas&quot;, schemaService, requestConverterFunction)</span>
+<span class="fc" id="L229">        .annotatedService(BASE_PATH + &quot;volumes&quot;, volumeService, requestConverterFunction)</span>
+<span class="fc" id="L230">        .annotatedService(BASE_PATH + &quot;tables&quot;, tableService, requestConverterFunction)</span>
+<span class="fc" id="L231">        .annotatedService(</span>
+            BASE_PATH + &quot;staging-tables&quot;, stagingTableService, requestConverterFunction)
+<span class="fc" id="L233">        .annotatedService(BASE_PATH + &quot;functions&quot;, functionService, requestConverterFunction)</span>
+<span class="fc" id="L234">        .annotatedService(BASE_PATH + &quot;models&quot;, modelService, requestConverterFunction)</span>
+<span class="fc" id="L235">        .annotatedService(BASE_PATH, metastoreService, requestConverterFunction)</span>
+<span class="fc" id="L236">        .annotatedService(</span>
+            BASE_PATH + &quot;temporary-table-credentials&quot;,
+            temporaryTableCredentialsService,
+            requestConverterFunction)
+<span class="fc" id="L240">        .annotatedService(</span>
+            BASE_PATH + &quot;temporary-volume-credentials&quot;,
+            temporaryVolumeCredentialsService,
+            requestConverterFunction)
+<span class="fc" id="L244">        .annotatedService(</span>
+            BASE_PATH + &quot;temporary-model-version-credentials&quot;,
+            temporaryModelVersionCredentialsService,
+            requestConverterFunction)
+<span class="fc" id="L248">        .annotatedService(</span>
+            BASE_PATH + &quot;temporary-path-credentials&quot;,
+            temporaryPathCredentialsService,
+            requestConverterFunction)
+<span class="fc" id="L252">        .annotatedService(BASE_PATH + &quot;credentials&quot;, credentialService, requestConverterFunction)</span>
+<span class="fc" id="L253">        .annotatedService(</span>
+            BASE_PATH + &quot;delta/preview/commits&quot;, deltaCommitsService, requestConverterFunction)
+<span class="fc" id="L255">        .annotatedService(</span>
+            BASE_PATH + &quot;external-locations&quot;, externalLocationService, requestConverterFunction);
+<span class="fc" id="L257">    addIcebergApiServices(</span>
+        armeriaServerBuilder,
+        unityCatalogServerBuilder.serverProperties,
+        unityCatalogServerBuilder.cloudCredentialVendor,
+        catalogService,
+        schemaService,
+        tableService,
+        repositories);
+<span class="fc" id="L265">  }</span>
+
+  private void addIcebergApiServices(
+      ServerBuilder armeriaServerBuilder,
+      ServerProperties serverProperties,
+      CloudCredentialVendor cloudCredentialVendor,
+      CatalogService catalogService,
+      SchemaService schemaService,
+      TableService tableService,
+      Repositories repositories) {
+<span class="fc" id="L275">    LOGGER.info(&quot;Adding Iceberg services...&quot;);</span>
+
+    // Add support for Iceberg REST APIs
+<span class="fc" id="L278">    ObjectMapper icebergMapper = RESTObjectMapper.mapper();</span>
+<span class="fc" id="L279">    JacksonRequestConverterFunction icebergRequestConverter =</span>
+        new JacksonRequestConverterFunction(icebergMapper);
+<span class="fc" id="L281">    JacksonResponseConverterFunction icebergResponseConverter =</span>
+        new JacksonResponseConverterFunction(icebergMapper);
+<span class="fc" id="L283">    MetadataService metadataService =</span>
+        new MetadataService(new FileIOFactory(cloudCredentialVendor, serverProperties));
+<span class="fc" id="L285">    TableConfigService tableConfigService =</span>
+        new TableConfigService(cloudCredentialVendor, serverProperties);
+
+<span class="fc" id="L288">    armeriaServerBuilder.annotatedService(</span>
+        BASE_PATH + &quot;iceberg&quot;,
+        new IcebergRestCatalogService(
+            catalogService,
+            schemaService,
+            tableService,
+            tableConfigService,
+            metadataService,
+            repositories),
+        icebergRequestConverter,
+        icebergResponseConverter);
+<span class="fc" id="L299">  }</span>
+
+  private void addSecurityDecorators(
+      ServerBuilder armeriaServerBuilder,
+      ServerProperties serverProperties,
+      UnityCatalogAuthorizer authorizer,
+      Repositories repositories) {
+    // TODO: eventually might want to make this secure-by-default.
+<span class="fc bfc" id="L307" title="All 2 branches covered.">    if (serverProperties.isAuthorizationEnabled()) {</span>
+<span class="fc" id="L308">      LOGGER.info(&quot;Enabling security decorators...&quot;);</span>
+
+      // Note: Decorators are applied in reverse order.
+<span class="fc" id="L311">      UnityAccessDecorator accessDecorator = new UnityAccessDecorator(authorizer, repositories);</span>
+<span class="fc" id="L312">      armeriaServerBuilder.routeDecorator().pathPrefix(BASE_PATH).build(accessDecorator);</span>
+<span class="fc" id="L313">      armeriaServerBuilder</span>
+<span class="fc" id="L314">          .routeDecorator()</span>
+<span class="fc" id="L315">          .pathPrefix(CONTROL_PATH)</span>
+<span class="fc" id="L316">          .exclude(CONTROL_PATH + &quot;auth/tokens&quot;)</span>
+<span class="fc" id="L317">          .build(accessDecorator);</span>
+
+<span class="fc" id="L319">      AuthDecorator authDecorator = new AuthDecorator(securityContext, repositories);</span>
+<span class="fc" id="L320">      armeriaServerBuilder.routeDecorator().pathPrefix(BASE_PATH).build(authDecorator);</span>
+<span class="fc" id="L321">      armeriaServerBuilder</span>
+<span class="fc" id="L322">          .routeDecorator()</span>
+<span class="fc" id="L323">          .pathPrefix(CONTROL_PATH)</span>
+<span class="fc" id="L324">          .exclude(CONTROL_PATH + &quot;auth/tokens&quot;)</span>
+<span class="fc" id="L325">          .build(authDecorator);</span>
+
+<span class="fc" id="L327">      ExceptionHandlingDecorator exceptionDecorator =</span>
+          new ExceptionHandlingDecorator(new GlobalExceptionHandler());
+<span class="fc" id="L329">      armeriaServerBuilder.decorator(exceptionDecorator);</span>
+    }
+<span class="fc" id="L331">  }</span>
+
+  public static void main(String[] args) {
+<span class="nc" id="L334">    OptionParser options = new OptionParser();</span>
+<span class="nc" id="L335">    options.parse(args);</span>
+    // Start Unity Catalog server
+    UnityCatalogServer unityCatalogServer =
+<span class="nc" id="L338">        UnityCatalogServer.builder().port(options.getPort() + 1).build();</span>
+<span class="nc" id="L339">    unityCatalogServer.printArt();</span>
+<span class="nc" id="L340">    unityCatalogServer.start();</span>
+    // Start URL transcoder
+<span class="nc" id="L342">    Vertx vertx = Vertx.vertx();</span>
+<span class="nc" id="L343">    Verticle transcodeVerticle =</span>
+<span class="nc" id="L344">        new URLTranscoderVerticle(options.getPort(), options.getPort() + 1);</span>
+<span class="nc" id="L345">    vertx.deployVerticle(transcodeVerticle);</span>
+<span class="nc" id="L346">  }</span>
+
+  public void start() {
+<span class="fc" id="L349">    LOGGER.info(&quot;Starting Unity Catalog server...&quot;);</span>
+<span class="fc" id="L350">    server.start().join();</span>
+<span class="fc" id="L351">    LOGGER.info(&quot;Unity Catalog server started.&quot;);</span>
+<span class="fc" id="L352">  }</span>
+
+  public void stop() {
+<span class="fc" id="L355">    server.stop().join();</span>
+<span class="fc" id="L356">    LOGGER.info(&quot;Unity Catalog server stopped.&quot;);</span>
+<span class="fc" id="L357">  }</span>
+
+  private void printArt() {
+<span class="nc" id="L360">    String art =</span>
+        &quot;################################################################### \n&quot;
+            + &quot;#  _    _       _ _            _____      _        _              #\n&quot;
+            + &quot;# | |  | |     (_) |          / ____|    | |      | |             #\n&quot;
+            + &quot;# | |  | |_ __  _| |_ _   _  | |     __ _| |_ __ _| | ___   __ _  #\n&quot;
+            + &quot;# | |  | | '_ \\| | __| | | | | |    / _` | __/ _` | |/ _ \\ / _` | #\n&quot;
+            + &quot;# | |__| | | | | | |_| |_| | | |___| (_| | || (_| | | (_) | (_| | #\n&quot;
+            + &quot;#  \\____/|_| |_|_|\\__|\\__, |  \\_____\\__,_|\\__\\__,_|_|\\___/ \\__, | #\n&quot;
+            + &quot;#                      __/ |                                __/ | #\n&quot;
+            + &quot;#                     |___/               &quot;
+<span class="nc" id="L370">            + String.format(&quot;%15s&quot;, (&quot;v&quot; + VersionUtils.VERSION))</span>
+            + &quot;  |___/  #\n&quot;
+            + &quot;###################################################################\n&quot;;
+<span class="nc" id="L373">    System.out.println(art);</span>
+<span class="nc" id="L374">  }</span>
+
+  public static UnityCatalogServer.Builder builder() {
+<span class="fc" id="L377">    return new UnityCatalogServer.Builder();</span>
+  }
+
+  public static class Builder {
+    private int port;
+    private ServerProperties serverProperties;
+    private CloudCredentialVendor cloudCredentialVendor;
+
+    private Builder() {}
+
+    public UnityCatalogServer.Builder port(int port) {
+<span class="fc" id="L388">      this.port = port;</span>
+<span class="fc" id="L389">      return this;</span>
+    }
+
+    public UnityCatalogServer.Builder serverProperties(ServerProperties serverProperties) {
+<span class="fc" id="L393">      this.serverProperties = serverProperties;</span>
+<span class="fc" id="L394">      return this;</span>
+    }
+
+    public UnityCatalogServer.Builder credentialOperations(
+        CloudCredentialVendor cloudCredentialVendor) {
+<span class="fc" id="L399">      this.cloudCredentialVendor = cloudCredentialVendor;</span>
+<span class="fc" id="L400">      return this;</span>
+    }
+
+    public UnityCatalogServer build() {
+<span class="fc" id="L404">      return new UnityCatalogServer(this);</span>
+    }
+  }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.7.202105040129</span></div></body></html>
