@@ -67,6 +67,8 @@ public abstract class BaseSparkIntegrationTest extends BaseCRUDTest {
   @Override
   public void setUp() {
     super.setUp();
+    // Some Delta Spark functionalities needs testing mode to be turned on so that we can test.
+    System.setProperty("spark.testing", "true");
     schemaOperations = new SdkSchemaOperations(createApiClient(serverConfig));
     cleanUp();
     try {

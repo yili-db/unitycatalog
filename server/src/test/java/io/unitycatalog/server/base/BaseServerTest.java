@@ -1,11 +1,16 @@
 package io.unitycatalog.server.base;
 
 import io.unitycatalog.server.UnityCatalogServer;
+import io.unitycatalog.server.persist.utils.FileOperations;
 import io.unitycatalog.server.persist.utils.HibernateConfigurator;
 import io.unitycatalog.server.service.credential.CloudCredentialVendor;
 import io.unitycatalog.server.utils.ServerProperties;
 import io.unitycatalog.server.utils.ServerProperties.Property;
 import io.unitycatalog.server.utils.TestUtils;
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.Properties;
 import org.hibernate.Session;
 import org.hibernate.SessionFactory;
@@ -20,6 +25,7 @@ public abstract class BaseServerTest {
   protected static Properties serverProperties;
   protected static HibernateConfigurator hibernateConfigurator;
   protected static CloudCredentialVendor cloudCredentialVendor;
+  private static Path tableStorageRoot;
 
   protected void setUpProperties() {
     serverProperties = new Properties();
@@ -47,6 +53,7 @@ public abstract class BaseServerTest {
       int port = TestUtils.getRandomPort();
       setUpProperties();
       ServerProperties initServerProperties = new ServerProperties(serverProperties);
+      tableStorageRoot = Paths.get(initServerProperties.get(Property.TABLE_STORAGE_ROOT));
       setUpCredentialOperations();
       hibernateConfigurator = new HibernateConfigurator(initServerProperties);
       unityCatalogServer =
@@ -81,6 +88,13 @@ public abstract class BaseServerTest {
       session.close();
 
       unityCatalogServer.stop();
+      try {
+        FileOperations.deleteLocalDirectory(tableStorageRoot);
+      } catch (FileNotFoundException e) {
+        // It's OK if it doesn't exist yet
+      } catch (IOException e) {
+        throw new RuntimeException(e);
+      }
     }
   }
 }
