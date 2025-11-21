@@ -54,9 +54,23 @@ public class ManagedTableReadWriteTest extends BaseTableReadWriteTest {
             () ->
                 sql(
                     "CREATE TABLE %s(name STRING) USING delta "
+                        + "TBLPROPERTIES ('delta.feature.catalogManaged' = 'disabled')",
+                    fullTableName))
+        .hasMessageContaining("delta.feature.catalogManaged=disabled");
+    assertThatThrownBy(
+            () ->
+                sql(
+                    "CREATE TABLE %s(name STRING) USING delta "
                         + "TBLPROPERTIES ('delta.feature.catalogOwned-preview' = 'disabled')",
                     fullTableName))
         .hasMessageContaining("delta.feature.catalogOwned-preview=disabled");
+    assertThatThrownBy(
+            () ->
+                sql(
+                    "CREATE TABLE %s(name STRING) USING delta "
+                        + "TBLPROPERTIES ('catalogManaged.unityCatalog.tableId' = 'some_id')",
+                    fullTableName))
+        .hasMessageContaining("catalogManaged.unityCatalog.tableId");
     assertThatThrownBy(
             () ->
                 sql(
@@ -87,9 +101,7 @@ public class ManagedTableReadWriteTest extends BaseTableReadWriteTest {
           counter++;
           // Setting this table property isn't necessary, but we should not throw an error.
           String propertyClause =
-              setProperty
-                  ? "TBLPROPERTIES ('delta.feature.catalogOwned-preview' = 'supported')"
-                  : "";
+              setProperty ? "TBLPROPERTIES ('delta.feature.catalogManaged' = 'supported')" : "";
 
           if (ctas) {
             sql(
@@ -112,7 +124,11 @@ public class ManagedTableReadWriteTest extends BaseTableReadWriteTest {
           assertThat(describeResult.get("Is_managed_location")).isEqualTo("true");
           assertThat(describeResult).containsKey("Table Properties");
           assertThat(describeResult.get("Table Properties"))
+              .contains("delta.feature.catalogManaged=supported");
+          assertThat(describeResult.get("Table Properties"))
               .contains("delta.feature.catalogOwned-preview=supported");
+          assertThat(describeResult.get("Table Properties"))
+              .contains("catalogManaged.unityCatalog.tableId=");
           assertThat(describeResult.get("Table Properties")).contains("ucTableId=");
 
           // Make sure the table has commit under /_delta_log/_staged_commits

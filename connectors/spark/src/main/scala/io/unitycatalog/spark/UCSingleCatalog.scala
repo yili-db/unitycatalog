@@ -102,14 +102,19 @@ class UCSingleCatalog
     // not a path table like parquet.`/file/path`, we generate the UC-managed table location here.
     if (!hasExternalClause && !hasLocationClause && !isPathTable) {
       // Check that caller shouldn't set some properties
-      List(UCSingleCatalog.UC_TABLE_ID_KEY, TableCatalog.PROP_IS_MANAGED_LOCATION)
+      List(UCSingleCatalog.UC_TABLE_ID_KEY,
+        UCSingleCatalog.UC_TABLE_ID_KEY_OLD,
+        TableCatalog.PROP_IS_MANAGED_LOCATION)
         .filter(properties.containsKey(_))
         .foreach(p => throw new ApiException(s"Cannot specify property $p."))
-      // It's OK to set delta.feature.catalogOwned-preview if it matches exactly what we need
-      Option(properties.get(UCSingleCatalog.CATALOG_OWNED_KEY))
-        .filter(_ != UCSingleCatalog.CATALOG_OWNED_VALUE)
-        .foreach(v => throw new ApiException(
-          s"Cannot specify property ${UCSingleCatalog.CATALOG_OWNED_KEY}=$v."))
+      // It's OK to set delta.feature.catalogManaged if it matches exactly what we need
+      List(UCSingleCatalog.CATALOG_MANAGED_KEY, UCSingleCatalog.CATALOG_MANAGED_KEY_OLD)
+        .map(k => (k, Option(properties.get(k))))
+        .foreach { case (k, v) =>
+          if (v.exists(_ != UCSingleCatalog.CATALOG_MANAGED_VALUE)) {
+            throw new ApiException(s"Cannot specify property $k=$v")
+          }
+        }
 
       // Get staging table location and table id from UC
       val createStagingTable = new CreateStagingTable()
@@ -123,8 +128,13 @@ class UCSingleCatalog
       val newProps = new util.HashMap[String, String]
       newProps.putAll(properties)
       newProps.put(TableCatalog.PROP_LOCATION, stagingTableInfo.getStagingLocation)
+      // Set the table properties required by Delta to enable Delta commit
       newProps.put(UCSingleCatalog.UC_TABLE_ID_KEY, stagingTableInfo.getId)
-      newProps.put(UCSingleCatalog.CATALOG_OWNED_KEY, UCSingleCatalog.CATALOG_OWNED_VALUE)
+      newProps.put(UCSingleCatalog.CATALOG_MANAGED_KEY, UCSingleCatalog.CATALOG_MANAGED_VALUE)
+      // Set the table properties with their old names to enable Delta commit as required by older
+      // Delta release
+      newProps.put(UCSingleCatalog.UC_TABLE_ID_KEY_OLD, stagingTableInfo.getId)
+      newProps.put(UCSingleCatalog.CATALOG_MANAGED_KEY_OLD, UCSingleCatalog.CATALOG_MANAGED_VALUE)
       // `PROP_IS_MANAGED_LOCATION` is used to indicate that the table location is not
       // user-specified but system-generated, which is exactly the case here.
       newProps.put(TableCatalog.PROP_IS_MANAGED_LOCATION, "true")
@@ -210,10 +220,13 @@ class UCSingleCatalog
 
 object UCSingleCatalog {
   // These properties are required to have UC as Delta commit coordinator
-  val UC_TABLE_ID_KEY = "ucTableId"
-  val CATALOG_OWNED_KEY = "delta.feature.catalogOwned-preview"
-  val CATALOG_OWNED_VALUE = "supported"
-
+  val UC_TABLE_ID_KEY = "catalogManaged.unityCatalog.tableId"
+  val CATALOG_MANAGED_KEY = "delta.feature.catalogManaged"
+  val CATALOG_MANAGED_VALUE = "supported"
+  // These two properties are the old names used by Delta version <=0.4.0. They are also set in
+  // order to be compatible with older Delta releases.
+  val UC_TABLE_ID_KEY_OLD = "ucTableId"
+  val CATALOG_MANAGED_KEY_OLD = "delta.feature.catalogOwned-preview"
 
   val LOAD_DELTA_CATALOG = ThreadLocal.withInitial[Boolean](() => true)
   val DELTA_CATALOG_LOADED = ThreadLocal.withInitial[Boolean](() => false)
