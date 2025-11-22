@@ -37,6 +37,7 @@ class UCSingleCatalog
   private[this] var apiClient: ApiClient = null;
   private[this] var temporaryCredentialsApi: TemporaryCredentialsApi = null
   private[this] var tablesApi: TablesApi = null
+  private[this] var catalogOwnedFeatureName: String = null
 
   @volatile private var delegate: TableCatalog = null
 
@@ -62,6 +63,8 @@ class UCSingleCatalog
           .getDeclaredConstructor().newInstance().asInstanceOf[TableCatalog]
         delegate.asInstanceOf[DelegatingCatalogExtension].setDelegateCatalog(proxy)
         UCSingleCatalog.DELTA_CATALOG_LOADED.set(true)
+        catalogOwnedFeatureName = getCatalogOwnedFeatureNameFromDelta
+        logError(s"catalogOwnedFeatureName=$catalogOwnedFeatureName")
       } catch {
         case e: ClassNotFoundException =>
           logWarning("DeltaCatalog is not available in the classpath", e)
@@ -70,6 +73,25 @@ class UCSingleCatalog
     } else {
       delegate = proxy
     }
+  }
+
+  private def getCatalogOwnedFeatureNameFromDelta: String = {
+    // 1. Get the Class object for the singleton
+    val clazz = Class.forName("org.apache.spark.sql.delta.CatalogOwnedTableFeature$")
+
+    // 2. Get the singleton instance from the static MODULE$ field
+    val field = clazz.getField("MODULE$")
+    val instance = field.get(null) // 'null' for static fields
+
+    // 3. Get the method by name and parameter types
+    //    For sayHello(), there are no parameters.
+    val method = clazz.getMethod("name")
+
+    // 4. Invoke the method on the instance
+    //    The result is returned as AnyRef (Object in Java)
+    val result: String = method.invoke(instance).asInstanceOf[String]
+
+    "delta.feature." + result
   }
 
   override def name(): String = delegate.name()
@@ -95,7 +117,7 @@ class UCSingleCatalog
     val hasLocationClause = properties.containsKey(TableCatalog.PROP_LOCATION)
     if (hasExternalClause && !hasLocationClause) {
       throw new ApiException("Cannot create EXTERNAL TABLE without location.")
-    }
+    }//org.apache.spark.sql.delta.CatalogOwnedTableFeature
     def isPathTable = ident.namespace().length == 1 && new Path(ident.name()).isAbsolute
 
     // If both EXTERNAL and LOCATION are not specified in the CREATE TABLE command, and the table is
