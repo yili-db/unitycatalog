@@ -12,6 +12,7 @@ import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import org.apache.commons.lang3.tuple.Pair;
 import org.apache.hadoop.fs.Path;
 import org.hibernate.Session;
 import org.hibernate.query.Query;
@@ -46,6 +47,34 @@ public class PathBasedRpcUtils {
           SecurableType.VOLUME, new DaoClassInfo(VolumeInfoDAO.class, "storageLocation"),
           SecurableType.REGISTERED_MODEL, new DaoClassInfo(RegisteredModelInfoDAO.class, "url"),
           SecurableType.EXTERNAL_LOCATION, new DaoClassInfo(ExternalLocationDAO.class, "url"));
+
+  public static final List<SecurableType> DATA_OBJECT_SECURABLE_TYPES =
+      List.of(SecurableType.TABLE, SecurableType.VOLUME, SecurableType.REGISTERED_MODEL);
+
+  public static List<Pair<SecurableType, IdentifiableDAO>> getAllEntitiesDAOsOverlapUrl(
+      Session session,
+      String url,
+      List<SecurableType> securableTypes,
+      int limit,
+      boolean includeParent,
+      boolean includeSelf,
+      boolean includeSubdir) {
+    return securableTypes.stream()
+        .flatMap(
+            securableType ->
+                generateEntitiesDAOsOverlapUrlQuery(
+                        session,
+                        url,
+                        securableType,
+                        limit,
+                        includeParent,
+                        includeSelf,
+                        includeSubdir)
+                    .stream()
+                    .map(entity -> Pair.<SecurableType, IdentifiableDAO>of(securableType, entity)))
+        .limit(limit)
+        .toList();
+  }
 
   /**
    * Finds entities of the specified type whose URLs overlap with the given URL. Refer to

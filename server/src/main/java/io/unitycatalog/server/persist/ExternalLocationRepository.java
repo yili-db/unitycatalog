@@ -194,13 +194,33 @@ public class ExternalLocationRepository {
         /* readOnly = */ false);
   }
 
-  public ExternalLocationDAO deleteExternalLocation(String name) {
+  public ExternalLocationDAO deleteExternalLocation(String name, boolean force) {
     return TransactionManager.executeWithTransaction(
         sessionFactory,
         session -> {
           ExternalLocationDAO existingLocation = getExternalLocationDAO(session, name);
           if (existingLocation == null) {
             throw new BaseException(ErrorCode.NOT_FOUND, "External location not found: " + name);
+          }
+          if (!force) {
+            PathBasedRpcUtils.getAllEntitiesDAOsOverlapUrl(
+                    session,
+                    existingLocation.getUrl(),
+                    PathBasedRpcUtils.DATA_OBJECT_SECURABLE_TYPES,
+                    1,
+                    /* includeParent= */ false,
+                    /* includeSelf= */ true,
+                    /* includeSubdir= */ true)
+                .stream()
+                .findAny()
+                .ifPresent(
+                    pair -> {
+                      throw new BaseException(
+                          ErrorCode.INVALID_ARGUMENT,
+                          String.format(
+                              "External location still used by %s %s '",
+                              pair.getLeft(), pair.getRight().getId()));
+                    });
           }
           session.remove(existingLocation);
           LOGGER.info("Deleted external location: {}", name);
