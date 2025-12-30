@@ -56,6 +56,7 @@ public class ExternalLocationDAO extends IdentifiableDAO {
   public ExternalLocationInfo toExternalLocationInfo() {
     return new ExternalLocationInfo()
         .name(getName())
+        .id(getId().toString())
         .url(getUrl())
         .comment(getComment())
         .owner(getOwner())
