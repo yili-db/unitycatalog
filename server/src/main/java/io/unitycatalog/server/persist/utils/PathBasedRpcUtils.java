@@ -1,10 +1,13 @@
 package io.unitycatalog.server.persist.utils;
 
 import com.google.common.annotations.VisibleForTesting;
+import io.unitycatalog.server.exception.BaseException;
+import io.unitycatalog.server.exception.ErrorCode;
 import io.unitycatalog.server.model.SecurableType;
 import io.unitycatalog.server.persist.dao.ExternalLocationDAO;
 import io.unitycatalog.server.persist.dao.IdentifiableDAO;
 import io.unitycatalog.server.persist.dao.RegisteredModelInfoDAO;
+import io.unitycatalog.server.persist.dao.SchemaInfoDAO;
 import io.unitycatalog.server.persist.dao.TableInfoDAO;
 import io.unitycatalog.server.persist.dao.VolumeInfoDAO;
 import io.unitycatalog.server.utils.Constants;
@@ -12,12 +15,18 @@ import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
+import java.util.stream.Stream;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.hadoop.fs.Path;
 import org.hibernate.Session;
+import org.hibernate.SessionFactory;
 import org.hibernate.query.Query;
 
 /**
+ * TODO: update this comment
+ *
  * Utility class for performing path-based database queries on Unity Catalog entities.
  *
  * <p>This class provides methods to find entities (tables, volumes, registered models, external
@@ -37,7 +46,11 @@ import org.hibernate.query.Query;
  */
 public class PathBasedRpcUtils {
 
-  private PathBasedRpcUtils() {}
+  private final SessionFactory sessionFactory;
+
+  public PathBasedRpcUtils(SessionFactory sessionFactory) {
+    this.sessionFactory = sessionFactory;
+  }
 
   private record DaoClassInfo(Class<? extends IdentifiableDAO> clazz, String urlFieldName) {}
 
@@ -50,6 +63,92 @@ public class PathBasedRpcUtils {
 
   public static final List<SecurableType> DATA_OBJECT_SECURABLE_TYPES =
       List.of(SecurableType.TABLE, SecurableType.VOLUME, SecurableType.REGISTERED_MODEL);
+
+  private static final List<SecurableType> DATA_OBJECTS_AND_EXTERNAL_LOCATION_SECURABLE_TYPES =
+      Stream.concat(
+              DATA_OBJECT_SECURABLE_TYPES.stream(), Stream.of(SecurableType.EXTERNAL_LOCATION))
+          .toList();
+
+  public Map<SecurableType, UUID> getMapResourceIdsForPath(String url) {
+    String standardizedUrl = FileOperations.toStandardizedURIString(url);
+    return TransactionManager.executeWithTransaction(
+        sessionFactory,
+        session -> {
+          // 1. Fail if it's parent of any of the data objects or external location
+          validateOverlapsWithEntities(session, standardizedUrl);
+          // 2. If it's under only one of the data objects, use that object as resource id
+          // 3. If it's under only one of the external location, use that external location as
+          //  resource id
+          return getResourceIdOfOwnerEntity(session, standardizedUrl, DATA_OBJECT_SECURABLE_TYPES)
+              .or(
+                  () ->
+                      getResourceIdOfOwnerEntity(
+                          session, standardizedUrl, List.of(SecurableType.EXTERNAL_LOCATION)))
+              .orElse(Map.of());
+        },
+        "Failed to get external location by URL",
+        /* readOnly= */ true);
+  }
+
+  private void validateOverlapsWithEntities(Session session, String url) {
+    List<Pair<SecurableType, IdentifiableDAO>> objectsUnderUrl =
+        getAllEntitiesDAOsOverlapUrl(
+            session,
+            url,
+            DATA_OBJECTS_AND_EXTERNAL_LOCATION_SECURABLE_TYPES,
+            1,
+            false,
+            false,
+            true);
+    if (!objectsUnderUrl.isEmpty()) {
+      throw new BaseException(
+          ErrorCode.INVALID_ARGUMENT, "Input path '" + url + "' overlaps with other entities.");
+    }
+  }
+
+  private Optional<Map<SecurableType, UUID>> getResourceIdOfOwnerEntity(
+      Session session, String url, List<SecurableType> securableTypes) {
+    List<Pair<SecurableType, IdentifiableDAO>> objectsContainUrl =
+        getAllEntitiesDAOsOverlapUrl(session, url, securableTypes, 2, true, true, false);
+    if (objectsContainUrl.size() > 1) {
+      throw new BaseException(
+          ErrorCode.INVALID_ARGUMENT, "Input path '" + url + "' overlaps with multiple entities.");
+    } else if (objectsContainUrl.isEmpty()) {
+      return Optional.empty();
+    }
+
+    SecurableType securableType = objectsContainUrl.get(0).getLeft();
+    IdentifiableDAO dao = objectsContainUrl.get(0).getRight();
+    if (securableType == SecurableType.EXTERNAL_LOCATION) {
+      return Optional.of(Map.of(securableType, dao.getId()));
+    }
+
+    UUID schemId = getSchemaId(securableType, dao);
+    SchemaInfoDAO schemaInfoDAO = session.get(SchemaInfoDAO.class, schemId);
+    if (schemaInfoDAO == null) {
+      throw new BaseException(ErrorCode.NOT_FOUND, "Schema not found: " + schemId);
+    }
+    UUID catalogId = schemaInfoDAO.getCatalogId();
+
+    return Optional.of(
+        Map.of(
+            SecurableType.CATALOG,
+            catalogId,
+            SecurableType.SCHEMA,
+            schemId,
+            securableType,
+            dao.getId()));
+  }
+
+  private UUID getSchemaId(SecurableType securableType, IdentifiableDAO dao) {
+    return switch (securableType) {
+      case TABLE -> ((TableInfoDAO) dao).getSchemaId();
+      case VOLUME -> ((VolumeInfoDAO) dao).getSchemaId();
+      case REGISTERED_MODEL -> ((RegisteredModelInfoDAO) dao).getSchemaId();
+      default -> throw new BaseException(
+          ErrorCode.UNIMPLEMENTED, "Unknown securable type: " + securableType);
+    };
+  }
 
   public static List<Pair<SecurableType, IdentifiableDAO>> getAllEntitiesDAOsOverlapUrl(
       Session session,
