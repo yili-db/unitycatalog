@@ -62,22 +62,26 @@ public enum CliParams {
   FILTER("filter", "Query by which the results have to be filtered", "filter"),
   START_INDEX(
       "start_index", "Specifies the index (starting at 1) of the first result.", "startIndex"),
-  COUNT("count", "Desired number of results per page", "count");
+  COUNT("count", "Desired number of results per page", "count"),
+  URL("url", "The URL/path of the external location (e.g., s3://bucket/path)", "url"),
+  CREDENTIAL_NAME("credential_name", "The name of the storage credential", "credential_name"),
+  AWS_IAM_ROLE_ARN(
+      "aws_iam_role_arn", "The ARN of the AWS IAM role for credential", "aws_iam_role_arn"),
+  AZURE_DIRECTORY_ID(
+      "azure_directory_id",
+      "The Azure directory ID in service principal configuration",
+      "azure_directory_id"),
+  AZURE_APPLICATION_ID(
+      "azure_application_id",
+      "The Azure application ID in service principal configuration",
+      "azure_application_id"),
+  AZURE_CLIENT_SECRET(
+      "azure_client_secret",
+      "The Azure client secret in service principal configuration",
+      "azure_client_secret");
   private final String value;
   private final String helpMessage;
   private final String serverParam;
-
-  CliParams(String value) {
-    this.value = value;
-    this.serverParam = "";
-    this.helpMessage = "";
-  }
-
-  CliParams(String value, String helpMessage) {
-    this.value = value;
-    this.helpMessage = helpMessage;
-    this.serverParam = "";
-  }
 
   CliParams(String value, String helpMessage, String serverParam) {
     this.value = value;
@@ -104,15 +108,6 @@ public enum CliParams {
       }
     }
     throw new IllegalArgumentException("No enum constant for value: " + text);
-  }
-
-  public static boolean contains(String text) {
-    for (CliParams cliParam : CliParams.values()) {
-      if (cliParam.value.equalsIgnoreCase(text)) {
-        return true;
-      }
-    }
-    return false;
   }
 
   @Override

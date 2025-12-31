@@ -34,6 +34,7 @@ public class CredentialRepository {
   private static final PagedListingHelper<CredentialDAO> LISTING_HELPER =
       new PagedListingHelper<>(CredentialDAO.class);
   public static ObjectMapper objectMapper = new ObjectMapper();
+  private static final String AWS_IAM_ROLE_ARN_PATTERN = "^arn:aws:iam::\\d+:role/.*$";
 
   public CredentialRepository(SessionFactory sessionFactory) {
     this.sessionFactory = sessionFactory;
@@ -178,6 +179,7 @@ public class CredentialRepository {
     try {
       if (awsIamRole != null) {
         credentialType = CredentialDAO.CredentialType.AWS_IAM_ROLE;
+        validtaeAwsIamRoleArn(awsIamRole.getRoleArn());
         jsonCredential = objectMapper.writeValueAsString(fromAwsIamRoleRequest(awsIamRole));
       } else if (azureServicePrincipal != null) {
         credentialType = CredentialDAO.CredentialType.AZURE_SERVICE_PRINCIPAL;
@@ -250,5 +252,14 @@ public class CredentialRepository {
   private static AwsIamRoleResponse fromAwsIamRoleRequest(AwsIamRoleRequest awsIamRoleRequest) {
     // TODO: add external id and unity catalog server iam role
     return new AwsIamRoleResponse().roleArn(awsIamRoleRequest.getRoleArn());
+  }
+
+  private static void validtaeAwsIamRoleArn(String arn) {
+    if (arn == null || arn.isEmpty()) {
+      throw new BaseException(ErrorCode.INVALID_ARGUMENT, "AWS IAM role arn can not be empty");
+    }
+    if (!arn.matches(AWS_IAM_ROLE_ARN_PATTERN)) {
+      throw new BaseException(ErrorCode.INVALID_ARGUMENT, "AWS IAM role arn is invalid: " + arn);
+    }
   }
 }

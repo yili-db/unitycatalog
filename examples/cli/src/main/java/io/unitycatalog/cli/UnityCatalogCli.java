@@ -19,8 +19,12 @@ import org.apache.commons.cli.Option;
 import org.apache.commons.cli.Options;
 import org.apache.commons.cli.ParseException;
 import org.apache.logging.log4j.core.config.Configurator;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class UnityCatalogCli {
+
+  private static final Logger log = LoggerFactory.getLogger(UnityCatalogCli.class);
 
   static {
     System.setProperty("log4j.configurationFile", "etc/conf/cli.log4j2.properties");
@@ -158,10 +162,17 @@ public class UnityCatalogCli {
         case CliUtils.METASTORE:
           MetastoreCli.handle(cmd, apiClient);
           break;
+        case CliUtils.CREDENTIAL:
+          CredentialCli.handle(cmd, apiClient);
+          break;
+        case CliUtils.EXTERNAL_LOCATION:
+          ExternalLocationCli.handle(cmd, apiClient);
+          break;
         default:
           CliUtils.printHelp();
       }
     } catch (ParseException | JsonProcessingException e) {
+      log.error("errorrrrrrr", e);
       System.out.println(
           "Error occurred while parsing the command. "
               + "Please check the command and try again. "
