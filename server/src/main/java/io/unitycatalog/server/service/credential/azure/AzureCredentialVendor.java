@@ -1,5 +1,7 @@
 package io.unitycatalog.server.service.credential.azure;
 
+import io.unitycatalog.server.exception.BaseException;
+import io.unitycatalog.server.exception.ErrorCode;
 import io.unitycatalog.server.service.credential.CredentialContext;
 import io.unitycatalog.server.utils.ServerProperties;
 import java.util.Map;
@@ -7,29 +9,38 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public class AzureCredentialVendor {
   private final Map<String, ADLSStorageConfig> adlsConfigurations;
-  private final Map<String, AzureCredentialsGenerator> credGenerators = new ConcurrentHashMap<>();
+  private final Map<ADLSStorageConfig, AzureCredentialsGenerator> credGenerators =
+      new ConcurrentHashMap<>();
 
   public AzureCredentialVendor(ServerProperties serverProperties) {
     this.adlsConfigurations = serverProperties.getAdlsConfigurations();
   }
 
-  public AzureCredential vendAzureCredential(CredentialContext ctx) {
-    AzureCredentialsGenerator generator =
-        credGenerators.compute(
-            ctx.getStorageBase(),
-            (storageBase, credGenerator) ->
-                credGenerator == null
-                    ? createAzureCredentialsGenerator(storageBase)
-                    : credGenerator);
+  public AzureCredential vendAzureCredential(CredentialContext context) {
+    context
+        .getCredentialDAO()
+        .ifPresent(
+            c -> {
+              throw new BaseException(
+                  ErrorCode.UNIMPLEMENTED,
+                  "Storage credential/external location for Azure is not supported yet.");
+            });
 
-    return generator.generate(ctx);
+    ADLSLocationUtils.ADLSLocationParts locParts =
+        ADLSLocationUtils.parseLocation(context.getStorageBase());
+    ADLSStorageConfig c = adlsConfigurations.get(locParts.accountName());
+    // createAzureCredentialsGenerator still works without a config. But null can't be
+    // used as key for ConcurrentHashMap. Use EMPTY instead.
+    ADLSStorageConfig config = c != null ? c : ADLSStorageConfig.EMPTY;
+    AzureCredentialsGenerator generator =
+        credGenerators.computeIfAbsent(config, this::createAzureCredentialsGenerator);
+
+    return generator.generate(context);
   }
 
-  private AzureCredentialsGenerator createAzureCredentialsGenerator(String storageBase) {
-    ADLSLocationUtils.ADLSLocationParts locParts = ADLSLocationUtils.parseLocation(storageBase);
-    ADLSStorageConfig config = adlsConfigurations.get(locParts.accountName());
-
-    if (config == null) {
+  private AzureCredentialsGenerator createAzureCredentialsGenerator(ADLSStorageConfig config) {
+    if (config == ADLSStorageConfig.EMPTY) {
+      // EMPTY is used in place of null.
       return new AzureCredentialsGenerator.DatalakeCredentialsGenerator(null);
     }
 

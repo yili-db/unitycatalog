@@ -22,7 +22,7 @@ import io.unitycatalog.server.persist.ModelRepository;
 import io.unitycatalog.server.persist.Repositories;
 import io.unitycatalog.server.persist.UserRepository;
 import io.unitycatalog.server.persist.utils.RepositoryUtils;
-import io.unitycatalog.server.service.credential.CloudCredentialVendor;
+import io.unitycatalog.server.service.credential.StorageCredentialVendor;
 import io.unitycatalog.server.service.credential.CredentialContext;
 import java.util.Map;
 import java.util.Set;
@@ -37,16 +37,16 @@ public class TemporaryModelVersionCredentialsService {
   private final UserRepository userRepository;
 
   private final UnityAccessEvaluator evaluator;
-  private final CloudCredentialVendor cloudCredentialVendor;
+  private final StorageCredentialVendor storageCredentialVendor;
   private final KeyMapper keyMapper;
 
   @SneakyThrows
   public TemporaryModelVersionCredentialsService(UnityCatalogAuthorizer authorizer,
-                                                 CloudCredentialVendor cloudCredentialVendor,
+                                                 StorageCredentialVendor storageCredentialVendor,
                                                  Repositories repositories) {
     this.evaluator = new UnityAccessEvaluator(authorizer);
-    this.cloudCredentialVendor = cloudCredentialVendor;
-    this.keyMapper = new KeyMapper(repositories);
+    this.storageCredentialVendor = storageCredentialVendor;
+    this.keyMapper = repositories.getKeyMapper();
     this.modelRepository = repositories.getModelRepository();
     this.userRepository = repositories.getUserRepository();
   }
@@ -88,7 +88,7 @@ public class TemporaryModelVersionCredentialsService {
       throw new BaseException(ErrorCode.INVALID_ARGUMENT, errorMsg);
     }
     return HttpResponse.ofJson(
-        cloudCredentialVendor.vendCredential(
+        storageCredentialVendor.vendCredential(
             modelVersionInfo.getStorageLocation(),
             modelVersionOperationToPrivileges(requestedOperation)));
   }

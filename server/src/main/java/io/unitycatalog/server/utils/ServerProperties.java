@@ -359,7 +359,6 @@ public class ServerProperties {
       adlsConfigMap.put(
           storageAccountName,
           ADLSStorageConfig.builder()
-              .storageAccountName(storageAccountName)
               .tenantId(tenantId)
               .clientId(clientId)
               .clientSecret(clientSecret)

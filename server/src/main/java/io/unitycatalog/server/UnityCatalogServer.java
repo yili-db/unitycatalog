@@ -48,9 +48,7 @@ import io.unitycatalog.server.service.TemporaryTableCredentialsService;
 import io.unitycatalog.server.service.TemporaryVolumeCredentialsService;
 import io.unitycatalog.server.service.VolumeService;
 import io.unitycatalog.server.service.credential.CloudCredentialVendor;
-import io.unitycatalog.server.service.credential.aws.AwsCredentialVendor;
-import io.unitycatalog.server.service.credential.azure.AzureCredentialVendor;
-import io.unitycatalog.server.service.credential.gcp.GcpCredentialVendor;
+import io.unitycatalog.server.service.credential.StorageCredentialVendor;
 import io.unitycatalog.server.service.iceberg.FileIOFactory;
 import io.unitycatalog.server.service.iceberg.MetadataService;
 import io.unitycatalog.server.service.iceberg.TableConfigService;
@@ -80,10 +78,6 @@ public class UnityCatalogServer {
     Configurator.initialize(null, "etc/conf/server.log4j2.properties");
   }
 
-  public UnityCatalogServer() {
-    this(UnityCatalogServer.builder());
-  }
-
   private UnityCatalogServer(UnityCatalogServer.Builder unityCatalogServerBuilder) {
     setDefaults(unityCatalogServerBuilder);
     Path configurationFolder = Path.of("etc", "conf");
@@ -101,18 +95,6 @@ public class UnityCatalogServer {
     }
     if (unityCatalogServerBuilder.serverProperties == null) {
       unityCatalogServerBuilder.serverProperties(new ServerProperties(SERVER_PROPERTIES_FILE));
-    }
-    if (unityCatalogServerBuilder.cloudCredentialVendor == null) {
-      AwsCredentialVendor awsCredentialVendor =
-          new AwsCredentialVendor(unityCatalogServerBuilder.serverProperties);
-      AzureCredentialVendor azureCredentialVendor =
-          new AzureCredentialVendor(unityCatalogServerBuilder.serverProperties);
-      GcpCredentialVendor gcpCredentialVendor =
-          new GcpCredentialVendor(unityCatalogServerBuilder.serverProperties);
-      CloudCredentialVendor cloudCredentialVendor =
-          new CloudCredentialVendor(
-              awsCredentialVendor, azureCredentialVendor, gcpCredentialVendor);
-      unityCatalogServerBuilder.credentialOperations(cloudCredentialVendor);
     }
   }
 
@@ -168,7 +150,12 @@ public class UnityCatalogServer {
       UnityCatalogAuthorizer authorizer,
       Repositories repositories) {
     LOGGER.info("Adding Unity Catalog API services...");
-    CloudCredentialVendor cloudCredentialVendor = unityCatalogServerBuilder.cloudCredentialVendor;
+    CloudCredentialVendor cloudCredentialVendor =
+        unityCatalogServerBuilder.cloudCredentialVendor != null
+            ? unityCatalogServerBuilder.cloudCredentialVendor
+            : new CloudCredentialVendor(unityCatalogServerBuilder.serverProperties);
+    StorageCredentialVendor storageCredentialVendor =
+        new StorageCredentialVendor(cloudCredentialVendor, repositories.getPathBasedRpcUtils());
 
     // Add support for Unity Catalog APIs
     AuthService authService =
@@ -190,14 +177,14 @@ public class UnityCatalogServer {
     MetastoreService metastoreService = new MetastoreService(repositories);
     // TODO: combine these into a single service in a follow-up PR
     TemporaryTableCredentialsService temporaryTableCredentialsService =
-        new TemporaryTableCredentialsService(authorizer, cloudCredentialVendor, repositories);
+        new TemporaryTableCredentialsService(authorizer, storageCredentialVendor, repositories);
     TemporaryVolumeCredentialsService temporaryVolumeCredentialsService =
-        new TemporaryVolumeCredentialsService(authorizer, cloudCredentialVendor, repositories);
+        new TemporaryVolumeCredentialsService(authorizer, storageCredentialVendor, repositories);
     TemporaryModelVersionCredentialsService temporaryModelVersionCredentialsService =
         new TemporaryModelVersionCredentialsService(
-            authorizer, cloudCredentialVendor, repositories);
+            authorizer, storageCredentialVendor, repositories);
     TemporaryPathCredentialsService temporaryPathCredentialsService =
-        new TemporaryPathCredentialsService(authorizer, cloudCredentialVendor, repositories);
+        new TemporaryPathCredentialsService(authorizer, storageCredentialVendor, repositories);
 
     JacksonRequestConverterFunction requestConverterFunction =
         new JacksonRequestConverterFunction(
@@ -257,7 +244,7 @@ public class UnityCatalogServer {
     addIcebergApiServices(
         armeriaServerBuilder,
         unityCatalogServerBuilder.serverProperties,
-        unityCatalogServerBuilder.cloudCredentialVendor,
+        storageCredentialVendor,
         catalogService,
         schemaService,
         tableService,
@@ -267,23 +254,22 @@ public class UnityCatalogServer {
   private void addIcebergApiServices(
       ServerBuilder armeriaServerBuilder,
       ServerProperties serverProperties,
-      CloudCredentialVendor cloudCredentialVendor,
+      StorageCredentialVendor storageCredentialVendor,
       CatalogService catalogService,
       SchemaService schemaService,
       TableService tableService,
       Repositories repositories) {
     LOGGER.info("Adding Iceberg services...");
 
+    FileIOFactory fileIOFactory = new FileIOFactory(storageCredentialVendor, serverProperties);
     // Add support for Iceberg REST APIs
     ObjectMapper icebergMapper = RESTObjectMapper.mapper();
     JacksonRequestConverterFunction icebergRequestConverter =
         new JacksonRequestConverterFunction(icebergMapper);
     JacksonResponseConverterFunction icebergResponseConverter =
         new JacksonResponseConverterFunction(icebergMapper);
-    MetadataService metadataService =
-        new MetadataService(new FileIOFactory(cloudCredentialVendor, serverProperties));
-    TableConfigService tableConfigService =
-        new TableConfigService(cloudCredentialVendor, serverProperties);
+    MetadataService metadataService = new MetadataService(fileIOFactory);
+    TableConfigService tableConfigService = new TableConfigService(fileIOFactory);
 
     armeriaServerBuilder.annotatedService(
         BASE_PATH + "iceberg",

@@ -20,7 +20,9 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 import lombok.experimental.SuperBuilder;
+import lombok.extern.slf4j.Slf4j;
 
+@Slf4j
 @Entity
 @Table(name = "uc_credentials")
 // Lombok
@@ -126,5 +128,22 @@ public class CredentialDAO extends IdentifiableDAO {
       throw new IllegalArgumentException("Failed to parse credential", e);
     }
     return credentialInfo;
+  }
+
+  private <T> T parseCredential(CredentialType credentialType, Class<T> clazz) {
+    if (getCredentialType() != credentialType) {
+      // Mismatch credential type.
+      return null;
+    }
+    try {
+      return objectMapper.readValue(getCredential(), clazz);
+    } catch (JsonProcessingException e) {
+      throw new IllegalArgumentException(
+          "Failed to parse credential of " + clazz.getSimpleName(), e);
+    }
+  }
+
+  public AwsIamRoleResponse getAwsIamRoleResponse() {
+    return parseCredential(CredentialType.AWS_IAM_ROLE, AwsIamRoleResponse.class);
   }
 }

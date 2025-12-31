@@ -2,14 +2,17 @@ package io.unitycatalog.server.service.credential.azure;
 
 import lombok.Builder;
 import lombok.Getter;
+import lombok.ToString;
 
 @Getter
 @Builder
+@ToString
 public class ADLSStorageConfig {
-  private String storageAccountName;
-  private String tenantId;
-  private String clientId;
-  private String clientSecret;
-  private String credentialsGenerator;
-  private boolean testMode;
+  private final String tenantId;
+  private final String clientId;
+  private final String clientSecret;
+  private final String credentialsGenerator;
+  private final boolean testMode;
+
+  public static final ADLSStorageConfig EMPTY = ADLSStorageConfig.builder().build();
 }

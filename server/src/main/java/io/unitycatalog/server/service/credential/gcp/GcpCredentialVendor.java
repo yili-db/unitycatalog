@@ -26,7 +26,7 @@ public class GcpCredentialVendor {
   public static final List<String> INITIAL_SCOPES =
       List.of("https://www.googleapis.com/auth/cloud-platform");
   private final Map<String, GcsStorageConfig> gcsConfigurations;
-  private final Map<String, GcpCredentialsGenerator> credentialGenerators =
+  private final Map<GcsStorageConfig, GcpCredentialsGenerator> credentialGenerators =
       new ConcurrentHashMap<>();
 
   public GcpCredentialVendor(ServerProperties serverProperties) {
@@ -34,17 +34,26 @@ public class GcpCredentialVendor {
   }
 
   public AccessToken vendGcpToken(CredentialContext credentialContext) {
-    String storageBase = credentialContext.getStorageBase();
-    GcsStorageConfig storageConfig = gcsConfigurations.get(storageBase);
+    credentialContext
+        .getCredentialDAO()
+        .ifPresent(
+            c -> {
+              throw new BaseException(
+                  ErrorCode.UNIMPLEMENTED,
+                  "Storage credential/external location for GCP is not supported yet.");
+            });
 
-    if (storageConfig == null) {
+    String storageBase = credentialContext.getStorageBase();
+    GcsStorageConfig config = gcsConfigurations.get(storageBase);
+
+    if (config == null) {
       throw new BaseException(
           ErrorCode.FAILED_PRECONDITION,
           format("Unknown GCS storage configuration for %s.", storageBase));
     }
 
     GcpCredentialsGenerator generator =
-        credentialGenerators.computeIfAbsent(storageBase, key -> createGenerator(storageConfig));
+        credentialGenerators.computeIfAbsent(config, this::createGenerator);
     return generator.generate(credentialContext);
   }
 

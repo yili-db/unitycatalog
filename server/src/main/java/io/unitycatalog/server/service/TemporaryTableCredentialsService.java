@@ -16,7 +16,7 @@ import io.unitycatalog.server.persist.Repositories;
 import io.unitycatalog.server.persist.TableRepository;
 import io.unitycatalog.server.persist.UserRepository;
 import io.unitycatalog.server.service.credential.CredentialContext;
-import io.unitycatalog.server.service.credential.CloudCredentialVendor;
+import io.unitycatalog.server.service.credential.StorageCredentialVendor;
 import lombok.SneakyThrows;
 
 import java.util.Collections;
@@ -35,16 +35,16 @@ public class TemporaryTableCredentialsService {
   private final UserRepository userRepository;
 
   private final UnityAccessEvaluator evaluator;
-  private final CloudCredentialVendor cloudCredentialVendor;
+  private final StorageCredentialVendor storageCredentialVendor;
   private final KeyMapper keyMapper;
 
   @SneakyThrows
   public TemporaryTableCredentialsService(UnityCatalogAuthorizer authorizer,
-                                          CloudCredentialVendor cloudCredentialVendor,
+                                          StorageCredentialVendor storageCredentialVendor,
                                           Repositories repositories) {
     this.evaluator = new UnityAccessEvaluator(authorizer);
-    this.cloudCredentialVendor = cloudCredentialVendor;
-    this.keyMapper = new KeyMapper(repositories);
+    this.storageCredentialVendor = storageCredentialVendor;
+    this.keyMapper = repositories.getKeyMapper();
     this.tableRepository = repositories.getTableRepository();
     this.userRepository = repositories.getUserRepository();
   }
@@ -57,7 +57,7 @@ public class TemporaryTableCredentialsService {
     String tableId = generateTemporaryTableCredential.getTableId();
     String storageLocation = tableRepository.getStorageLocationForTableOrStagingTable(
         UUID.fromString(tableId));
-    return HttpResponse.ofJson(cloudCredentialVendor.vendCredential(storageLocation,
+    return HttpResponse.ofJson(storageCredentialVendor.vendCredential(storageLocation,
             tableOperationToPrivileges(generateTemporaryTableCredential.getOperation())));
   }
 
@@ -93,13 +93,12 @@ public class TemporaryTableCredentialsService {
         generateTemporaryTableCredential.getOperation() == TableOperation.READ
             ? readExpression : writeExpression;
 
-    Map<SecurableType, Object> resourceKeys = keyMapper.mapResourceKeys(
-        Map.of(METASTORE, "metastore",
-            TABLE, generateTemporaryTableCredential.getTableId()));
+    Map<SecurableType, Object> resourceKeys =
+        keyMapper.mapResourceKeys(
+            Map.of(METASTORE, "metastore", TABLE, generateTemporaryTableCredential.getTableId()));
 
     if (!evaluator.evaluate(userRepository.findPrincipalId(), authorizeExpression, resourceKeys)) {
       throw new BaseException(ErrorCode.PERMISSION_DENIED, "Access denied.");
     }
   }
 }
-

@@ -11,7 +11,8 @@ import software.amazon.awssdk.services.sts.model.Credentials;
 public class AwsCredentialVendor {
 
   private final Map<String, S3StorageConfig> s3Configurations;
-  private final Map<String, CredentialsGenerator> credGenerators = new ConcurrentHashMap<>();
+  private final Map<S3StorageConfig, CredentialsGenerator> credGenerators =
+      new ConcurrentHashMap<>();
 
   public AwsCredentialVendor(ServerProperties serverProperties) {
     this.s3Configurations = serverProperties.getS3Configurations();
@@ -48,13 +49,12 @@ public class AwsCredentialVendor {
     if (config == null) {
       throw new BaseException(ErrorCode.FAILED_PRECONDITION, "S3 bucket configuration not found.");
     }
+    if (context.getCredentialDAO().isPresent()) {
+      config = config.mergeCredentialDAO(context.getCredentialDAO().get());
+    }
 
     CredentialsGenerator generator =
-        credGenerators.compute(
-            context.getStorageBase(),
-            (storageBase, credGenerator) ->
-                credGenerator == null ? createCredentialsGenerator(config) : credGenerator);
-
+        credGenerators.computeIfAbsent(config, this::createCredentialsGenerator);
     return generator.generate(context);
   }
 }

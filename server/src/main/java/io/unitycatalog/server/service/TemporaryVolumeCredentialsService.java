@@ -16,7 +16,7 @@ import io.unitycatalog.server.model.VolumeOperation;
 import io.unitycatalog.server.persist.Repositories;
 import io.unitycatalog.server.persist.UserRepository;
 import io.unitycatalog.server.persist.VolumeRepository;
-import io.unitycatalog.server.service.credential.CloudCredentialVendor;
+import io.unitycatalog.server.service.credential.StorageCredentialVendor;
 import io.unitycatalog.server.service.credential.CredentialContext;
 import lombok.SneakyThrows;
 
@@ -35,16 +35,16 @@ public class TemporaryVolumeCredentialsService {
   private final UserRepository userRepository;
 
   private final UnityAccessEvaluator evaluator;
-  private final CloudCredentialVendor cloudCredentialVendor;
+  private final StorageCredentialVendor storageCredentialVendor;
   private final KeyMapper keyMapper;
 
   @SneakyThrows
   public TemporaryVolumeCredentialsService(UnityCatalogAuthorizer authorizer,
-                                           CloudCredentialVendor cloudCredentialVendor,
+                                           StorageCredentialVendor storageCredentialVendor,
                                            Repositories repositories) {
     this.evaluator = new UnityAccessEvaluator(authorizer);
-    this.cloudCredentialVendor = cloudCredentialVendor;
-    this.keyMapper = new KeyMapper(repositories);
+    this.storageCredentialVendor = storageCredentialVendor;
+    this.keyMapper = repositories.getKeyMapper();
     this.volumeRepository = repositories.getVolumeRepository();
     this.userRepository = repositories.getUserRepository();
   }
@@ -60,7 +60,7 @@ public class TemporaryVolumeCredentialsService {
     }
     VolumeInfo volumeInfo = volumeRepository.getVolumeById(volumeId);
     return HttpResponse.ofJson(
-        cloudCredentialVendor.vendCredential(
+        storageCredentialVendor.vendCredential(
             volumeInfo.getStorageLocation(),
             volumeOperationToPrivileges(generateTemporaryVolumeCredential.getOperation())));
   }
@@ -87,11 +87,11 @@ public class TemporaryVolumeCredentialsService {
         #authorizeAny(#principal, #volume, OWNER, READ_VOLUME)
         """;
 
-    // TODO: add WRITE_VOLUME to the expression
     String writeExpression = """
         #authorizeAny(#principal, #catalog, OWNER, USE_CATALOG) &&
         #authorizeAny(#principal, #schema, OWNER, USE_SCHEMA) &&
-        #authorize(#principal, #volume, OWNER)
+        (#authorize(#principal, #volume, OWNER) ||
+            #authorizeAll(#principal, #volume, READ_VOLUME, WRITE_VOLUME))
         """;
 
     String authorizeExpression =

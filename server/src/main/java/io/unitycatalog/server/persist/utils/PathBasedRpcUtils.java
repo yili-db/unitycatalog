@@ -4,6 +4,7 @@ import com.google.common.annotations.VisibleForTesting;
 import io.unitycatalog.server.exception.BaseException;
 import io.unitycatalog.server.exception.ErrorCode;
 import io.unitycatalog.server.model.SecurableType;
+import io.unitycatalog.server.persist.dao.CredentialDAO;
 import io.unitycatalog.server.persist.dao.ExternalLocationDAO;
 import io.unitycatalog.server.persist.dao.IdentifiableDAO;
 import io.unitycatalog.server.persist.dao.RegisteredModelInfoDAO;
@@ -295,6 +296,39 @@ public class PathBasedRpcUtils {
     }
     query.setMaxResults(limit);
     return query;
+  }
+
+  public Optional<CredentialDAO> getExternalLocationCredentialForPath(String url) {
+    return TransactionManager.executeWithTransaction(
+        sessionFactory,
+        session -> {
+          List<ExternalLocationDAO> externalLocationDAOs =
+              getAllEntitiesDAOsOverlapUrl(
+                      session, url, List.of(SecurableType.EXTERNAL_LOCATION), 2, true, true, false)
+                  .stream()
+                  .map(pair -> (ExternalLocationDAO) pair.getRight())
+                  .toList();
+          if (externalLocationDAOs.isEmpty()) {
+            // Not found
+            return Optional.empty();
+          } else if (externalLocationDAOs.size() > 1) {
+            // This is a invalid internal state. We never allow external locations with
+            // overlapping URLs.
+            throw new BaseException(
+                ErrorCode.FAILED_PRECONDITION,
+                "More than one existing external location with URL '" + url + "' exist.");
+          }
+          UUID credentialId = externalLocationDAOs.get(0).getCredentialId();
+          CredentialDAO credentialDAO = session.get(CredentialDAO.class, credentialId);
+          if (credentialDAO == null) {
+            throw new BaseException(
+                ErrorCode.NOT_FOUND,
+                String.format("Credential %s for '%s' not found.", credentialId, url));
+          }
+          return Optional.of(credentialDAO);
+        },
+        "Failed to get storage credential by URL",
+        /* readOnly= */ true);
   }
 
   /**

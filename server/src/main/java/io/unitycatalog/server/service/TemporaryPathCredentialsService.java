@@ -4,7 +4,6 @@ import com.linecorp.armeria.common.HttpResponse;
 import com.linecorp.armeria.server.annotation.ExceptionHandler;
 import com.linecorp.armeria.server.annotation.Post;
 import io.unitycatalog.server.auth.UnityCatalogAuthorizer;
-import io.unitycatalog.server.auth.annotation.AuthorizeExpression;
 import io.unitycatalog.server.exception.BaseException;
 import io.unitycatalog.server.exception.ErrorCode;
 import io.unitycatalog.server.exception.GlobalExceptionHandler;
@@ -12,8 +11,9 @@ import io.unitycatalog.server.model.GenerateTemporaryPathCredential;
 import io.unitycatalog.server.model.PathOperation;
 import io.unitycatalog.server.model.SecurableType;
 import io.unitycatalog.server.persist.Repositories;
-import io.unitycatalog.server.service.credential.CloudCredentialVendor;
+import io.unitycatalog.server.service.credential.StorageCredentialVendor;
 import io.unitycatalog.server.service.credential.CredentialContext;
+import lombok.SneakyThrows;
 import java.util.Collections;
 import java.util.Map;
 import java.util.Set;
@@ -23,24 +23,24 @@ import static io.unitycatalog.server.service.credential.CredentialContext.Privil
 
 @ExceptionHandler(GlobalExceptionHandler.class)
 public class TemporaryPathCredentialsService extends AuthorizedService {
-  private final CloudCredentialVendor cloudCredentialVendor;
+  private final StorageCredentialVendor storageCredentialVendor;
 
+  @SneakyThrows
   public TemporaryPathCredentialsService(
       UnityCatalogAuthorizer authorizer,
-      CloudCredentialVendor cloudCredentialVendor,
+      StorageCredentialVendor storageCredentialVendor,
       Repositories repositories) {
     super(authorizer, repositories);
-    this.cloudCredentialVendor = cloudCredentialVendor;
+    this.storageCredentialVendor = storageCredentialVendor;
   }
 
   @Post("")
-  @AuthorizeExpression("#defer")
   public HttpResponse generateTemporaryPathCredential(
       GenerateTemporaryPathCredential generateTemporaryPathCredential) {
     authorizeForOperation(generateTemporaryPathCredential);
 
     return HttpResponse.ofJson(
-        cloudCredentialVendor.vendCredential(
+        storageCredentialVendor.vendCredential(
             generateTemporaryPathCredential.getUrl(),
             pathOperationToPrivileges(generateTemporaryPathCredential.getOperation())));
   }
