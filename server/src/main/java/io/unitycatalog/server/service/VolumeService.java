@@ -17,6 +17,7 @@ import io.unitycatalog.server.model.ListVolumesResponseContent;
 import io.unitycatalog.server.model.SchemaInfo;
 import io.unitycatalog.server.model.UpdateVolumeRequestContent;
 import io.unitycatalog.server.model.VolumeInfo;
+import io.unitycatalog.server.model.VolumeType;
 import io.unitycatalog.server.persist.CatalogRepository;
 import io.unitycatalog.server.persist.MetastoreRepository;
 import io.unitycatalog.server.persist.Repositories;
@@ -69,6 +70,10 @@ public class VolumeService extends AuthorizedService {
       })
       CreateVolumeRequestContent createVolumeRequest) {
     // Throw error if catalog/schema does not exist
+    if (createVolumeRequest.getVolumeType() == VolumeType.EXTERNAL) {
+      // Additional authorization needed for external location
+      authorizeExternalLocationUse(VOLUME, createVolumeRequest.getStorageLocation());
+    }
     VolumeInfo volumeInfo = volumeRepository.createVolume(createVolumeRequest);
 
     SchemaInfo schemaInfo =

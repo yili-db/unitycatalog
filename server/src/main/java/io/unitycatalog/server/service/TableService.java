@@ -15,6 +15,7 @@ import io.unitycatalog.server.model.CreateTable;
 import io.unitycatalog.server.model.ListTablesResponse;
 import io.unitycatalog.server.model.SchemaInfo;
 import io.unitycatalog.server.model.TableInfo;
+import io.unitycatalog.server.model.TableType;
 import io.unitycatalog.server.persist.CatalogRepository;
 import io.unitycatalog.server.persist.MetastoreRepository;
 import io.unitycatalog.server.persist.Repositories;
@@ -65,6 +66,10 @@ public class TableService extends AuthorizedService {
       })
       CreateTable createTable) {
     assert createTable != null;
+    if (createTable.getTableType() == TableType.EXTERNAL) {
+      // Additional authorization needed for external location
+      authorizeExternalLocationUse(TABLE, createTable.getStorageLocation());
+    }
     TableInfo tableInfo = tableRepository.createTable(createTable);
 
     SchemaInfo schemaInfo =
@@ -162,5 +167,5 @@ public class TableService extends AuthorizedService {
               UUID.fromString(ti.getTableId()));
         });
   }
-}
 
+}
