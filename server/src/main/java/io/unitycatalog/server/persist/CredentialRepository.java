@@ -11,6 +11,7 @@ import io.unitycatalog.server.model.CredentialInfo;
 import io.unitycatalog.server.model.ListCredentialsResponse;
 import io.unitycatalog.server.model.UpdateCredentialRequest;
 import io.unitycatalog.server.persist.dao.CredentialDAO;
+import io.unitycatalog.server.persist.dao.ExternalLocationDAO;
 import io.unitycatalog.server.persist.utils.PagedListingHelper;
 import io.unitycatalog.server.persist.utils.TransactionManager;
 import io.unitycatalog.server.utils.IdentityUtils;
@@ -179,13 +180,29 @@ public class CredentialRepository {
     }
   }
 
-  public CredentialInfo deleteCredential(String name) {
+  public CredentialInfo deleteCredential(String name, boolean force) {
+    LOGGER.error("Deleting storage credential {}", name);
     return TransactionManager.executeWithTransaction(
         sessionFactory,
         session -> {
           CredentialDAO existingCredential = getCredentialDAO(session, name);
           if (existingCredential == null) {
             throw new BaseException(ErrorCode.NOT_FOUND, "Credential not found: " + name);
+          }
+          LOGGER.error("Deleting storage credential 222 {}", name);
+          if (!force) {
+            LOGGER.error("check storage credential 222 {}", name);
+            // Check if it's still used by any external location.
+            ExternalLocationDAO externalLocationDAO =
+                getExternalLocationDAOUsingCredential(session, existingCredential.getId());
+            LOGGER.error("Got dao {}", externalLocationDAO);
+            if (externalLocationDAO != null) {
+              throw new BaseException(
+                  ErrorCode.INVALID_ARGUMENT,
+                  "Credential still used by external location '"
+                      + externalLocationDAO.getName()
+                      + "'");
+            }
           }
           // Convert to CredentialInfo before removing from database
           CredentialInfo credentialInfo = existingCredential.toCredentialInfo();
@@ -195,6 +212,16 @@ public class CredentialRepository {
         },
         "Failed to delete credential",
         /* readOnly = */ false);
+  }
+
+  protected ExternalLocationDAO getExternalLocationDAOUsingCredential(
+      Session session, UUID credentialId) {
+    Query<ExternalLocationDAO> query =
+        session.createQuery(
+            "FROM ExternalLocationDAO WHERE credentialId = :value", ExternalLocationDAO.class);
+    query.setParameter("value", credentialId);
+    query.setMaxResults(1);
+    return query.uniqueResult();
   }
 
   private static AwsIamRoleResponse fromAwsIamRoleRequest(AwsIamRoleRequest awsIamRoleRequest) {

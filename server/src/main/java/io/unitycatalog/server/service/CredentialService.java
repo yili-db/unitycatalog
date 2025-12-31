@@ -98,8 +98,11 @@ public class CredentialService extends AuthorizedService {
       """)
   @AuthorizeKey(METASTORE)
   public HttpResponse deleteCredential(
-      @Param("name") @AuthorizeKey(CREDENTIAL) String name) {
-    CredentialInfo credentialInfo = credentialRepository.deleteCredential(name);
+      @Param("name") @AuthorizeKey(CREDENTIAL) String name,
+      @Param("force") Optional<Boolean> force) {
+    log.error("Deleting credential {}", name);
+    CredentialInfo credentialInfo =
+        credentialRepository.deleteCredential(name, force.orElse(false));
     removeAuthorizations(credentialInfo.getId());
     return HttpResponse.of(HttpStatus.OK);
   }
