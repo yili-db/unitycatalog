@@ -6,6 +6,7 @@ import io.unitycatalog.server.exception.BaseException;
 import io.unitycatalog.server.exception.ErrorCode;
 import io.unitycatalog.server.model.AwsIamRoleRequest;
 import io.unitycatalog.server.model.AwsIamRoleResponse;
+import io.unitycatalog.server.model.AzureServicePrincipalRequest;
 import io.unitycatalog.server.model.CreateCredentialRequest;
 import io.unitycatalog.server.model.CredentialInfo;
 import io.unitycatalog.server.model.ListCredentialsResponse;
@@ -16,7 +17,6 @@ import io.unitycatalog.server.persist.utils.PagedListingHelper;
 import io.unitycatalog.server.persist.utils.TransactionManager;
 import io.unitycatalog.server.utils.IdentityUtils;
 import io.unitycatalog.server.utils.ValidationUtils;
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
@@ -30,14 +30,12 @@ import org.slf4j.LoggerFactory;
 
 public class CredentialRepository {
   private static final Logger LOGGER = LoggerFactory.getLogger(CredentialRepository.class);
-  private final Repositories repositories;
   private final SessionFactory sessionFactory;
   private static final PagedListingHelper<CredentialDAO> LISTING_HELPER =
       new PagedListingHelper<>(CredentialDAO.class);
   public static ObjectMapper objectMapper = new ObjectMapper();
 
-  public CredentialRepository(Repositories repositories, SessionFactory sessionFactory) {
-    this.repositories = repositories;
+  public CredentialRepository(SessionFactory sessionFactory) {
     this.sessionFactory = sessionFactory;
   }
 
@@ -45,24 +43,21 @@ public class CredentialRepository {
     ValidationUtils.validateSqlObjectName(createCredentialRequest.getName());
     String callerId = IdentityUtils.findPrincipalEmailAddress();
     UUID storageCredentialId = UUID.randomUUID();
-    CredentialInfo storageCredentialInfo =
-        new CredentialInfo()
-            .id(storageCredentialId.toString())
+    CredentialDAO dao =
+        CredentialDAO.builder()
+            .id(storageCredentialId)
             .name(createCredentialRequest.getName())
             .comment(createCredentialRequest.getComment())
             .purpose(createCredentialRequest.getPurpose())
             .owner(callerId)
-            .createdAt(Instant.now().toEpochMilli())
-            .createdBy(callerId);
-
-    if (createCredentialRequest.getAwsIamRole() != null) {
-      storageCredentialInfo.setAwsIamRole(
-          fromAwsIamRoleRequest(createCredentialRequest.getAwsIamRole()));
-    } else {
-      throw new BaseException(
-          ErrorCode.INVALID_ARGUMENT,
-          "Storage credential must have one of aws_iam_role, azure_service_principal, azure_managed_identity or gcp_service_account");
-    }
+            .createdAt(new Date())
+            .createdBy(callerId)
+            .build();
+    updateCredentialFields(
+        dao,
+        true,
+        createCredentialRequest.getAwsIamRole(),
+        createCredentialRequest.getAzureServicePrincipal());
 
     return TransactionManager.executeWithTransaction(
         sessionFactory,
@@ -72,9 +67,9 @@ public class CredentialRepository {
                 ErrorCode.ALREADY_EXISTS,
                 "Storage credential already exists: " + createCredentialRequest.getName());
           }
-          session.persist(CredentialDAO.from(storageCredentialInfo));
-          LOGGER.info("Added storage credential: {}", storageCredentialInfo.getName());
-          return storageCredentialInfo;
+          session.persist(dao);
+          LOGGER.info("Added storage credential: {}", dao.getName());
+          return dao.toCredentialInfo();
         },
         "Failed to add storage credential",
         /* readOnly = */ false);
@@ -148,7 +143,11 @@ public class CredentialRepository {
             }
             existingCredential.setName(updateCredential.getNewName());
           }
-          updateCredentialFields(existingCredential, updateCredential);
+          updateCredentialFields(
+              existingCredential,
+              false,
+              updateCredential.getAwsIamRole(),
+              updateCredential.getAzureServicePrincipal());
           if (updateCredential.getComment() != null) {
             existingCredential.setComment(updateCredential.getComment());
           }
@@ -164,19 +163,43 @@ public class CredentialRepository {
   }
 
   private static void updateCredentialFields(
-      CredentialDAO existingCredential, UpdateCredentialRequest updateCredentialRequest) {
+      CredentialDAO dao,
+      boolean isCreate,
+      AwsIamRoleRequest awsIamRole,
+      AzureServicePrincipalRequest azureServicePrincipal) {
+    if (awsIamRole != null && azureServicePrincipal != null) {
+      throw new BaseException(
+          ErrorCode.INVALID_ARGUMENT,
+          "Can not contain both AWS and Azure credentials in the same storage credential");
+    }
+
+    CredentialDAO.CredentialType credentialType = null;
+    String jsonCredential = null;
     try {
-      if (updateCredentialRequest.getAwsIamRole() != null) {
-        existingCredential.setCredentialType(CredentialDAO.CredentialType.AWS_IAM_ROLE);
-        String jsonCredential =
-            objectMapper.writeValueAsString(
-                fromAwsIamRoleRequest(updateCredentialRequest.getAwsIamRole()));
-        // TODO: encrypt the credential
-        existingCredential.setCredential(jsonCredential);
+      if (awsIamRole != null) {
+        credentialType = CredentialDAO.CredentialType.AWS_IAM_ROLE;
+        jsonCredential = objectMapper.writeValueAsString(fromAwsIamRoleRequest(awsIamRole));
+      } else if (azureServicePrincipal != null) {
+        credentialType = CredentialDAO.CredentialType.AZURE_SERVICE_PRINCIPAL;
+        jsonCredential = objectMapper.writeValueAsString(azureServicePrincipal);
       }
     } catch (JsonProcessingException e) {
       throw new BaseException(
           ErrorCode.INVALID_ARGUMENT, "Failed to serialize credential: " + e.getMessage());
+    }
+
+    if (credentialType == null) {
+      if (isCreate) {
+        throw new BaseException(
+            ErrorCode.INVALID_ARGUMENT,
+            "Storage credential must have one of aws_iam_role, azure_service_principal");
+      }
+      // For update, it's OK as it may be just updating other fields. So leave the credential
+      // fields untouched.
+    } else {
+      dao.setCredentialType(credentialType);
+      // TODO: encrypt the credential
+      dao.setCredential(jsonCredential);
     }
   }
 

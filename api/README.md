@@ -69,6 +69,8 @@ All URIs are relative to *http://localhost:8080/api/2.1/unity-catalog*
  - [AwsCredentials](./Models/AwsCredentials.md)
  - [AwsIamRoleRequest](./Models/AwsIamRoleRequest.md)
  - [AwsIamRoleResponse](./Models/AwsIamRoleResponse.md)
+ - [AzureServicePrincipalRequest](./Models/AzureServicePrincipalRequest.md)
+ - [AzureServicePrincipalResponse](./Models/AzureServicePrincipalResponse.md)
  - [AzureUserDelegationSAS](./Models/AzureUserDelegationSAS.md)
  - [CatalogInfo](./Models/CatalogInfo.md)
  - [ColumnInfo](./Models/ColumnInfo.md)

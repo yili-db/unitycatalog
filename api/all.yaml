@@ -2722,6 +2722,8 @@ components:
           type: string
         aws_iam_role:
           $ref: '#/components/schemas/AwsIamRoleResponse'
+        azure_service_principal:
+          $ref: '#/components/schemas/AzureServicePrincipalResponse'
         comment:
           description: Comment associated with the credential.
           type: string
@@ -2763,6 +2765,8 @@ components:
           type: string
         aws_iam_role:
           $ref: '#/components/schemas/AwsIamRoleRequest'
+        azure_service_principal:
+          $ref: '#/components/schemas/AzureServicePrincipalRequest'
         purpose:
           $ref: "#/components/schemas/CredentialPurpose"
     UpdateCredentialRequest:
@@ -2776,6 +2780,8 @@ components:
           type: string
         aws_iam_role:
           $ref: '#/components/schemas/AwsIamRoleRequest'
+        azure_service_principal:
+          $ref: '#/components/schemas/AzureServicePrincipalRequest'
         new_name:
           description: New name for the credential.
           type: string
@@ -2802,6 +2808,36 @@ components:
         external_id:
           description: The external ID used in role assumption to prevent confused deputy problem.
           type: string
+    AzureServicePrincipalRequest:
+      description: The Azure service principal configuration in requests.
+      type: object
+      required:
+        - directory_id
+        - application_id
+        - client_secret
+      properties:
+        directory_id:
+          type: string
+          description: The directory ID corresponding to the Azure Active Directory (AAD) tenant of the application.
+        application_id:
+          type: string
+          description: The application ID of the application registration within the referenced AAD tenant.
+        client_secret:
+          type: string
+          description: The client secret generated for the above app ID in AAD.
+    AzureServicePrincipalResponse:
+      description: The Azure service principal configuration in responses without secrets.
+      type: object
+      required:
+        - directory_id
+        - application_id
+      properties:
+        directory_id:
+          type: string
+          description: The directory ID corresponding to the Azure Active Directory (AAD) tenant of the application.
+        application_id:
+          type: string
+          description: The application ID of the application registration within the referenced AAD tenant.
     ListCredentialsResponse:
       type: object
       properties:

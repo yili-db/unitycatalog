@@ -2,7 +2,10 @@ package io.unitycatalog.server.persist.dao;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.unitycatalog.server.model.AwsIamRoleRequest;
 import io.unitycatalog.server.model.AwsIamRoleResponse;
+import io.unitycatalog.server.model.AzureServicePrincipalRequest;
+import io.unitycatalog.server.model.AzureServicePrincipalResponse;
 import io.unitycatalog.server.model.CredentialInfo;
 import io.unitycatalog.server.model.CredentialPurpose;
 import jakarta.persistence.Column;
@@ -11,18 +14,14 @@ import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Lob;
 import jakarta.persistence.Table;
-import java.time.Instant;
 import java.util.Date;
-import java.util.UUID;
 import lombok.AllArgsConstructor;
 import lombok.EqualsAndHashCode;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 import lombok.experimental.SuperBuilder;
-import lombok.extern.slf4j.Slf4j;
 
-@Slf4j
 @Entity
 @Table(name = "uc_credentials")
 // Lombok
@@ -37,6 +36,7 @@ public class CredentialDAO extends IdentifiableDAO {
 
   public enum CredentialType {
     AWS_IAM_ROLE,
+    AZURE_SERVICE_PRINCIPAL,
     // Add other types as necessary
   }
 
@@ -69,39 +69,6 @@ public class CredentialDAO extends IdentifiableDAO {
   @Column(name = "updated_by")
   private String updatedBy;
 
-  public static CredentialDAO from(CredentialInfo credentialInfo) {
-    CredentialDAOBuilder credentialDAOBuilder =
-        CredentialDAO.builder()
-            .id(credentialInfo.getId() != null ? UUID.fromString(credentialInfo.getId()) : null)
-            .name(credentialInfo.getName())
-            .purpose(credentialInfo.getPurpose())
-            .comment(credentialInfo.getComment())
-            .owner(credentialInfo.getOwner())
-            .createdAt(
-                credentialInfo.getCreatedAt() != null
-                    ? Date.from(Instant.ofEpochMilli(credentialInfo.getCreatedAt()))
-                    : new Date())
-            .createdBy(credentialInfo.getCreatedBy())
-            .updatedAt(
-                credentialInfo.getUpdatedAt() != null
-                    ? Date.from(Instant.ofEpochMilli(credentialInfo.getUpdatedAt()))
-                    : null)
-            .updatedBy(credentialInfo.getUpdatedBy());
-    try {
-      if (credentialInfo.getAwsIamRole() != null) {
-        credentialDAOBuilder.credentialType(CredentialType.AWS_IAM_ROLE);
-        String jsonCredential = objectMapper.writeValueAsString(credentialInfo.getAwsIamRole());
-        // TODO: encrypt the credential
-        credentialDAOBuilder.credential(jsonCredential);
-      } else {
-        throw new IllegalArgumentException("Unknown credential type");
-      }
-    } catch (JsonProcessingException e) {
-      throw new IllegalArgumentException("Failed to serialize credential", e);
-    }
-    return credentialDAOBuilder.build();
-  }
-
   public CredentialInfo toCredentialInfo() {
     CredentialInfo credentialInfo =
         new CredentialInfo()
@@ -114,18 +81,16 @@ public class CredentialDAO extends IdentifiableDAO {
             .createdBy(getCreatedBy())
             .updatedAt(getUpdatedAt() != null ? getUpdatedAt().getTime() : null)
             .updatedBy(getUpdatedBy());
-    try {
-      // TODO: decrypt the credential
-      switch (getCredentialType()) {
-        case AWS_IAM_ROLE:
-          credentialInfo.setAwsIamRole(
-              objectMapper.readValue(getCredential(), AwsIamRoleResponse.class));
-          break;
-        default:
-          throw new IllegalArgumentException("Unknown credential type");
-      }
-    } catch (JsonProcessingException e) {
-      throw new IllegalArgumentException("Failed to parse credential", e);
+    // TODO: decrypt the credential
+    switch (getCredentialType()) {
+      case AWS_IAM_ROLE:
+        credentialInfo.setAwsIamRole(getAwsIamRoleResponse());
+        break;
+      case AZURE_SERVICE_PRINCIPAL:
+        credentialInfo.setAzureServicePrincipal(getAzureServicePrincipalResponse());
+        break;
+      default:
+        throw new IllegalArgumentException("Unknown credential type");
     }
     return credentialInfo;
   }
@@ -143,7 +108,25 @@ public class CredentialDAO extends IdentifiableDAO {
     }
   }
 
+  // The *Response classes have no secrets and are safe to return back to clients
+
   public AwsIamRoleResponse getAwsIamRoleResponse() {
     return parseCredential(CredentialType.AWS_IAM_ROLE, AwsIamRoleResponse.class);
+  }
+
+  public AzureServicePrincipalResponse getAzureServicePrincipalResponse() {
+    return parseCredential(
+        CredentialType.AZURE_SERVICE_PRINCIPAL, AzureServicePrincipalResponse.class);
+  }
+
+  // The *Request classes can have secrets and are meant to be used for temp cred vending only.
+
+  public AwsIamRoleRequest getAwsIamRoleRequest() {
+    return parseCredential(CredentialType.AWS_IAM_ROLE, AwsIamRoleRequest.class);
+  }
+
+  public AzureServicePrincipalRequest getAzureServicePrincipalRequest() {
+    return parseCredential(
+        CredentialType.AZURE_SERVICE_PRINCIPAL, AzureServicePrincipalRequest.class);
   }
 }

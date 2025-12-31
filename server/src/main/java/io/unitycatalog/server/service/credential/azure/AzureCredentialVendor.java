@@ -1,7 +1,5 @@
 package io.unitycatalog.server.service.credential.azure;
 
-import io.unitycatalog.server.exception.BaseException;
-import io.unitycatalog.server.exception.ErrorCode;
 import io.unitycatalog.server.service.credential.CredentialContext;
 import io.unitycatalog.server.utils.ServerProperties;
 import java.util.Map;
@@ -17,21 +15,19 @@ public class AzureCredentialVendor {
   }
 
   public AzureCredential vendAzureCredential(CredentialContext context) {
-    context
-        .getCredentialDAO()
-        .ifPresent(
-            c -> {
-              throw new BaseException(
-                  ErrorCode.UNIMPLEMENTED,
-                  "Storage credential/external location for Azure is not supported yet.");
-            });
-
-    ADLSLocationUtils.ADLSLocationParts locParts =
-        ADLSLocationUtils.parseLocation(context.getStorageBase());
-    ADLSStorageConfig c = adlsConfigurations.get(locParts.accountName());
-    // createAzureCredentialsGenerator still works without a config. But null can't be
-    // used as key for ConcurrentHashMap. Use EMPTY instead.
-    ADLSStorageConfig config = c != null ? c : ADLSStorageConfig.EMPTY;
+    ADLSStorageConfig config =
+        context
+            .getCredentialDAO()
+            .map(ADLSStorageConfig::fromCredentialDAO)
+            .orElseGet(
+                () -> {
+                  ADLSLocationUtils.ADLSLocationParts locParts =
+                      ADLSLocationUtils.parseLocation(context.getStorageBase());
+                  ADLSStorageConfig c = adlsConfigurations.get(locParts.accountName());
+                  // createAzureCredentialsGenerator still works without a config. But null can't be
+                  // used as key for ConcurrentHashMap. Use EMPTY instead.
+                  return c != null ? c : ADLSStorageConfig.EMPTY;
+                });
     AzureCredentialsGenerator generator =
         credGenerators.computeIfAbsent(config, this::createAzureCredentialsGenerator);
 
