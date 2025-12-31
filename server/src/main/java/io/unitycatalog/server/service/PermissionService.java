@@ -1,6 +1,7 @@
 package io.unitycatalog.server.service;
 
 import static io.unitycatalog.server.model.SecurableType.CATALOG;
+import static io.unitycatalog.server.model.SecurableType.CREDENTIAL;
 import static io.unitycatalog.server.model.SecurableType.EXTERNAL_LOCATION;
 import static io.unitycatalog.server.model.SecurableType.FUNCTION;
 import static io.unitycatalog.server.model.SecurableType.METASTORE;
@@ -23,6 +24,7 @@ import io.unitycatalog.server.model.PrivilegeAssignment;
 import io.unitycatalog.server.model.SecurableType;
 import io.unitycatalog.server.model.UpdatePermissions;
 import io.unitycatalog.server.persist.CatalogRepository;
+import io.unitycatalog.server.persist.CredentialRepository;
 import io.unitycatalog.server.persist.ExternalLocationRepository;
 import io.unitycatalog.server.persist.FunctionRepository;
 import io.unitycatalog.server.persist.MetastoreRepository;
@@ -60,6 +62,7 @@ public class PermissionService {
   private final VolumeRepository volumeRepository;
   private final ModelRepository modelRepository;
   private final ExternalLocationRepository externalLocationRepository;
+  private final CredentialRepository credentialRepository;
 
   public PermissionService(UnityCatalogAuthorizer authorizer, Repositories repositories) {
     this.authorizer = authorizer;
@@ -72,6 +75,7 @@ public class PermissionService {
     this.volumeRepository = repositories.getVolumeRepository();
     this.modelRepository = repositories.getModelRepository();
     this.externalLocationRepository = repositories.getExternalLocationRepository();
+    this.credentialRepository = repositories.getCredentialRepository();
   }
 
   // TODO: Refactor these endpoints to use a common method with dynamic resource id lookup
@@ -120,6 +124,11 @@ public class PermissionService {
   @Get("/external_location/{name}")
   public HttpResponse getExternalLocationAuthorization(@Param("name") String name) {
     return getAuthorization(EXTERNAL_LOCATION, name);
+  }
+
+  @Get("/credential/{name}")
+  public HttpResponse getStorageCredentialAuthorization(@Param("name") String name) {
+    return getAuthorization(CREDENTIAL, name);
   }
 
   private HttpResponse getAuthorization(
@@ -264,6 +273,16 @@ public class PermissionService {
     return updateAuthorization(EXTERNAL_LOCATION, name, request);
   }
 
+  @Patch("/credential/{name}")
+  @AuthorizeExpression(
+      "#authorize(#principal, #metastore, OWNER) || #authorize(#principal, #credential, OWNER)")
+  @AuthorizeKey(METASTORE)
+  public HttpResponse updateStorageCredentialAuthorization(
+      @Param("name") @AuthorizeKey(CREDENTIAL) String name,
+      UpdatePermissions request) {
+    return updateAuthorization(CREDENTIAL, name, request);
+  }
+
   private HttpResponse updateAuthorization(
       SecurableType securableType, String name, UpdatePermissions request) {
     UUID resourceId = getResourceId(securableType, name);
@@ -327,6 +346,7 @@ public class PermissionService {
       case VOLUME -> volumeRepository.getVolume(name).getVolumeId();
       case REGISTERED_MODEL -> modelRepository.getRegisteredModel(name).getId();
       case EXTERNAL_LOCATION -> externalLocationRepository.getExternalLocation(name).getId();
+      case CREDENTIAL -> credentialRepository.getCredential(name).getId();
       default -> throw new BaseException(ErrorCode.FAILED_PRECONDITION, "Unknown resource type");
     };
 

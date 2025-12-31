@@ -1,6 +1,7 @@
 package io.unitycatalog.server.auth.decorator;
 
 import static io.unitycatalog.server.model.SecurableType.CATALOG;
+import static io.unitycatalog.server.model.SecurableType.CREDENTIAL;
 import static io.unitycatalog.server.model.SecurableType.EXTERNAL_LOCATION;
 import static io.unitycatalog.server.model.SecurableType.FUNCTION;
 import static io.unitycatalog.server.model.SecurableType.METASTORE;
@@ -10,6 +11,7 @@ import static io.unitycatalog.server.model.SecurableType.TABLE;
 import static io.unitycatalog.server.model.SecurableType.VOLUME;
 
 import io.unitycatalog.server.model.CatalogInfo;
+import io.unitycatalog.server.model.CredentialInfo;
 import io.unitycatalog.server.model.FunctionInfo;
 import io.unitycatalog.server.model.RegisteredModelInfo;
 import io.unitycatalog.server.model.SchemaInfo;
@@ -17,6 +19,7 @@ import io.unitycatalog.server.model.SecurableType;
 import io.unitycatalog.server.model.TableInfo;
 import io.unitycatalog.server.model.VolumeInfo;
 import io.unitycatalog.server.persist.CatalogRepository;
+import io.unitycatalog.server.persist.CredentialRepository;
 import io.unitycatalog.server.persist.ExternalLocationRepository;
 import io.unitycatalog.server.persist.FunctionRepository;
 import io.unitycatalog.server.persist.MetastoreRepository;
@@ -28,8 +31,10 @@ import io.unitycatalog.server.persist.VolumeRepository;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.tuple.Pair;
 
+@Slf4j
 public class KeyMapper {
   private final CatalogRepository catalogRepository;
   private final SchemaRepository schemaRepository;
@@ -39,6 +44,7 @@ public class KeyMapper {
   private final ModelRepository modelRepository;
   private final MetastoreRepository metastoreRepository;
   private final ExternalLocationRepository externalLocationRepository;
+  private final CredentialRepository credentialRepository;
 
   public KeyMapper(Repositories repositories) {
     this.catalogRepository = repositories.getCatalogRepository();
@@ -49,6 +55,7 @@ public class KeyMapper {
     this.modelRepository = repositories.getModelRepository();
     this.metastoreRepository = repositories.getMetastoreRepository();
     this.externalLocationRepository = repositories.getExternalLocationRepository();
+    this.credentialRepository = repositories.getCredentialRepository();
   }
 
   public Map<SecurableType, Object> mapResourceKeys(Map<SecurableType, Object> resourceKeys) {
@@ -223,6 +230,14 @@ public class KeyMapper {
         resourceIds.put(
             EXTERNAL_LOCATION, externalLocationRepository.getExternalLocationDAO(name).getId());
       }
+    }
+
+    if (resourceKeys.containsKey(CREDENTIAL)) {
+      String name = (String) resourceKeys.get(CREDENTIAL);
+      log.error("yili name=" + name);
+      CredentialInfo credentialInfo = credentialRepository.getCredential(name);
+      log.error("yili credentialInfo=" + credentialInfo);
+      resourceIds.put(CREDENTIAL, UUID.fromString(credentialInfo.getId()));
     }
 
     return resourceIds;
