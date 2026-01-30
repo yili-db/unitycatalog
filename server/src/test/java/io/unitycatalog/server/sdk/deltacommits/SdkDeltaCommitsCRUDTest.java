@@ -693,4 +693,73 @@ public class SdkDeltaCommitsCRUDTest extends BaseTableCRUDTestEnv {
         c -> c.setMetadata(new DeltaMetadata()),
         "At least one of description, properties, or schema must be set in commit.metadata");
   }
+
+  @Test
+  public void testDeltaRestApiCommit() throws Exception {
+    // Test the Delta REST API endpoint to verify polymorphic deserialization works
+    String catalog = TestUtils.CATALOG_NAME;
+    String schema = TestUtils.SCHEMA_NAME;
+    String table = TestUtils.TABLE_NAME;
+
+    String fullName =
+        tableInfo.getCatalogName()
+            + "."
+            + tableInfo.getSchemaName()
+            + "."
+            + tableInfo.getName();
+    System.out.println("Testing Delta REST API with table: " + fullName);
+    System.out.println("Table ID: " + tableInfo.getTableId());
+    System.out.println("Storage Location: " + tableInfo.getStorageLocation());
+
+    // Build the Delta REST API request JSON
+    String requestJson = String.format("""
+        {
+          "requirements": [],
+          "updates": [
+            {
+              "action": "delta-add-commit",
+              "commit": {
+                "version": 1,
+                "timestamp": 1700000001,
+                "file-name": "00000000000000000001.json",
+                "file-size": 1024,
+                "file-modification-timestamp": 1700000001
+              }
+            }
+          ]
+        }
+        """);
+
+    // Make HTTP POST request to Delta REST API endpoint
+    java.net.http.HttpClient client = java.net.http.HttpClient.newHttpClient();
+    String url =
+        String.format(
+            "%s/api/2.1/unity-catalog/delta-rest/v1/catalogs/%s/namespaces/%s/tables/%s",
+            serverConfig.getServerUrl(),
+            catalog,
+            schema,
+            table);
+
+    System.out.println("Making request to URL: " + url);
+    System.out.println("Request JSON: " + requestJson);
+
+    java.net.http.HttpRequest request = java.net.http.HttpRequest.newBuilder()
+        .uri(java.net.URI.create(url))
+        .header("Content-Type", "application/json")
+        .header("Authorization", "Bearer " + serverConfig.getAuthToken())
+        .POST(java.net.http.HttpRequest.BodyPublishers.ofString(requestJson))
+        .build();
+
+    java.net.http.HttpResponse<String> response =
+        client.send(request, java.net.http.HttpResponse.BodyHandlers.ofString());
+
+    System.out.println("Delta REST API Response Status: " + response.statusCode());
+    System.out.println("Delta REST API Response Body: " + response.body());
+
+    // The request should be successfully deserialized and processed
+    assertThat(response.statusCode()).isEqualTo(200);
+    assertThat(response.body()).doesNotContain("Could not resolve type id");
+    assertThat(response.body()).doesNotContain("InvalidTypeIdException");
+    assertThat(response.body()).doesNotContain("cannot be cast");
+  }
 }

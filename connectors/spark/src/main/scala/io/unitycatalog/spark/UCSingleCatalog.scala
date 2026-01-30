@@ -1,8 +1,11 @@
 package io.unitycatalog.spark
 
-import io.unitycatalog.client.api.{SchemasApi, TablesApi, TemporaryCredentialsApi}
+import io.unitycatalog.client.api.TablesApi
 import io.unitycatalog.client.auth.TokenProvider
-import io.unitycatalog.client.model._
+import io.unitycatalog.client.deltarest.api.{ConfigurationApi => DeltaRestConfigurationApi, NamespacesApi => DeltaRestNamespacesApi, TablesApi => DeltaRestTablesApi}
+import io.unitycatalog.client.deltarest.model.{CatalogConfig => DeltaRestCatalogConfig, CreateNamespaceRequest => DeltaRestCreateNamespaceRequest, CreateStagingTableRequest => DeltaRestCreateStagingTableRequest, CreateTableRequest => DeltaRestCreateTableRequest, DeltaColumn => DeltaRestDeltaColumn, DeltaProtocol => DeltaRestDeltaProtocol, DataSourceFormat => DeltaRestDataSourceFormat, ListNamespacesResponse => DeltaRestListNamespacesResponse, ListTablesResponse => DeltaRestListTablesResponse, LoadTableResponse => DeltaRestLoadTableResponse, NamespaceResponse => DeltaRestNamespaceResponse, StagingTableResponse => DeltaRestStagingTableResponse, StorageCredential => DeltaRestStorageCredential, StructField => DeltaRestStructField, TableIdentifierWithDataSourceFormat => DeltaRestTableIdentifierWithDataSourceFormat, TableMetadata => DeltaRestTableMetadata}
+import io.unitycatalog.client.deltarest.{ApiClient => DeltaRestApiClient}
+import io.unitycatalog.client.model.{ColumnInfo, ColumnTypeName, CreateTable, DataSourceFormat, TableType}
 import io.unitycatalog.client.retry.JitterDelayRetryPolicy
 import io.unitycatalog.client.{ApiClient, ApiException}
 import io.unitycatalog.spark.auth.{AuthConfigUtils, CredPropsUtil}
@@ -35,9 +38,10 @@ class UCSingleCatalog
   private[this] var uri: URI = null
   private[this] var tokenProvider: TokenProvider = null
   private[this] var renewCredEnabled: Boolean = false
-  private[this] var apiClient: ApiClient = null;
-  private[this] var temporaryCredentialsApi: TemporaryCredentialsApi = null
-  private[this] var tablesApi: TablesApi = null
+  private[this] var apiClient: ApiClient = null
+  private[this] var deltaRestConfigurationApi: DeltaRestConfigurationApi = null
+  private[this] var deltaRestTablesApi: DeltaRestTablesApi = null
+  private[this] var catalogConfig: DeltaRestCatalogConfig = null
 
   @volatile private var delegate: TableCatalog = null
 
@@ -51,12 +55,27 @@ class UCSingleCatalog
       OptionsUtil.RENEW_CREDENTIAL_ENABLED,
       OptionsUtil.DEFAULT_RENEW_CREDENTIAL_ENABLED)
 
+    // Create Unity Catalog API client for non-Delta/non-Iceberg tables
     apiClient = ApiClientFactory.createApiClient(
-      JitterDelayRetryPolicy.builder().build(),uri, tokenProvider)
-    temporaryCredentialsApi = new TemporaryCredentialsApi(apiClient)
-    tablesApi = new TablesApi(apiClient)
-    val proxy = new UCProxy(uri, tokenProvider, renewCredEnabled, apiClient, tablesApi,
-      temporaryCredentialsApi)
+      JitterDelayRetryPolicy.builder().build(), uri, tokenProvider)
+
+    // Create Delta REST API client
+    val deltaRestUri = uri.toString + "/api/2.1/unity-catalog/delta-rest/v1"
+    val deltaRestApiClient = new DeltaRestApiClient()
+    deltaRestApiClient.updateBaseUri(deltaRestUri)
+    deltaRestConfigurationApi = new DeltaRestConfigurationApi(deltaRestApiClient)
+    deltaRestTablesApi = new DeltaRestTablesApi(deltaRestApiClient)
+
+    // Get catalog configuration from Delta REST API
+    try {
+      catalogConfig = deltaRestConfigurationApi.getConfig(name)
+      logInfo(s"Delta REST Catalog configured with ${catalogConfig.getEndpoints.size()} endpoints")
+    } catch {
+      case e: Exception =>
+        logWarning(s"Failed to get Delta REST catalog config: ${e.getMessage}")
+    }
+
+    val proxy = new UCProxy(uri, tokenProvider, renewCredEnabled, apiClient)
     proxy.initialize(name, options)
     if (UCSingleCatalog.LOAD_DELTA_CATALOG.get()) {
       try {
@@ -86,6 +105,7 @@ class UCSingleCatalog
   override def loadTable(ident: Identifier, timestamp:  Long): Table = delegate.loadTable(ident, timestamp)
 
   override def tableExists(ident: Identifier): Boolean = {
+    UCSingleCatalog.checkUnsupportedNestedNamespace(ident.namespace())
     delegate.tableExists(ident)
   }
 
@@ -130,57 +150,109 @@ class UCSingleCatalog
               s"Invalid property value '$v' for '$k'."))
         })
 
-      // Get staging table location and table id from UC
-      val createStagingTable = new CreateStagingTable()
-        .catalogName(name())
-        .schemaName(ident.namespace().head)
-        .name(ident.name())
-      val stagingTableInfo = tablesApi.createStagingTable(createStagingTable)
-      val stagingLocation = stagingTableInfo.getStagingLocation
-      val stagingTableId = stagingTableInfo.getId
+      // Get staging table location and table id from Delta REST API
+      val createStagingTableRequest = new DeltaRestCreateStagingTableRequest()
+      createStagingTableRequest.setName(ident.name())
+      val stagingTableResponse: DeltaRestStagingTableResponse =
+        deltaRestTablesApi.createStagingTable(name(), ident.namespace().head, createStagingTableRequest)
+      val stagingLocation = stagingTableResponse.getLocation
+      val stagingTableId = stagingTableResponse.getTableId.toString
 
       val newProps = new util.HashMap[String, String]
       newProps.putAll(properties)
-      newProps.put(TableCatalog.PROP_LOCATION, stagingTableInfo.getStagingLocation)
+      newProps.put(TableCatalog.PROP_LOCATION, stagingLocation)
       // Sets both the new and old table ID property while it's being renamed.
-      newProps.put(UCTableProperties.UC_TABLE_ID_KEY, stagingTableInfo.getId)
-      newProps.put(UCTableProperties.UC_TABLE_ID_KEY_OLD, stagingTableInfo.getId)
+      newProps.put(UCTableProperties.UC_TABLE_ID_KEY, stagingTableId)
+      newProps.put(UCTableProperties.UC_TABLE_ID_KEY_OLD, stagingTableId)
       // `PROP_IS_MANAGED_LOCATION` is used to indicate that the table location is not
       // user-specified but system-generated, which is exactly the case here.
       newProps.put(TableCatalog.PROP_IS_MANAGED_LOCATION, "true")
 
-      val temporaryCredentials = temporaryCredentialsApi.generateTemporaryTableCredentials(
-        new GenerateTemporaryTableCredential().tableId(stagingTableId).operation(TableOperation.READ_WRITE))
-      val credentialProps = CredPropsUtil.createTableCredProps(
-        renewCredEnabled,
-        CatalogUtils.stringToURI(stagingLocation).getScheme,
-        uri.toString,
-        tokenProvider,
-        stagingTableId,
-        TableOperation.READ_WRITE,
-        temporaryCredentials,
-      )
-      UCSingleCatalog.setCredentialProps(newProps, credentialProps)
+      // Add Delta table feature requirements from catalog config
+      // Only apply Delta features to Delta tables
+      val provider = Option(properties.get(TableCatalog.PROP_PROVIDER)).getOrElse("delta")
+      if (provider.equalsIgnoreCase("delta")) {
+        // Each feature is added as a separate property: delta.feature.X=supported
+        // Filter out features that aren't supported in all Delta versions
+        val unsupportedFeatures = Set("catalogManaged", "catalogmanaged")
+        if (catalogConfig != null && catalogConfig.getManagedTablesRequiredFeatures != null) {
+          catalogConfig.getManagedTablesRequiredFeatures.asScala
+            .filterNot(f => unsupportedFeatures.contains(f))
+            .foreach { feature =>
+              newProps.put(s"delta.feature.$feature", "supported")
+            }
+        }
+        // Suggested features are not yet implemented
+        // if (catalogConfig != null && catalogConfig.getManagedTablesSuggestedFeatures != null) {
+        //   catalogConfig.getManagedTablesSuggestedFeatures.asScala
+        //     .filterNot(f => unsupportedFeatures.contains(f))
+        //     .foreach { feature =>
+        //       newProps.put(s"delta.feature.$feature", "supported")
+        //     }
+        // }
+      }
+
+      // Use storage credentials from staging table response
+      val storageCredentials = stagingTableResponse.getStorageCredentials
+      if (storageCredentials != null && !storageCredentials.isEmpty) {
+        val cred = storageCredentials.get(0)
+        val locationUri = new URI(stagingLocation)
+        val scheme = locationUri.getScheme
+        // Use CredPropsUtil to get proper Hadoop config
+        val credProps = io.unitycatalog.spark.auth.CredPropsUtil.createTableCredProps(
+          renewCredEnabled,
+          scheme,
+          uri.toString,
+          tokenProvider,
+          stagingTableId,
+          io.unitycatalog.client.model.TableOperation.UNKNOWN_TABLE_OPERATION,
+          cred
+        )
+        credProps.asScala.foreach { case (key, value) =>
+          newProps.put(key, value)
+          newProps.put(TableCatalog.OPTION_PREFIX + key, value)
+        }
+      }
 
       delegate.createTable(ident, columns, partitions, newProps)
     } else if (hasLocationClause) {
+      // For external tables with user-provided location, get credentials for the location
       val location = properties.get(TableCatalog.PROP_LOCATION)
-      assert(location != null)
-      val cred = temporaryCredentialsApi.generateTemporaryPathCredentials(
-        new GenerateTemporaryPathCredential().url(location).operation(PathOperation.PATH_CREATE_TABLE))
       val newProps = new util.HashMap[String, String]
       newProps.putAll(properties)
 
-      val credentialProps = CredPropsUtil.createPathCredProps(
-        renewCredEnabled,
-        CatalogUtils.stringToURI(location).getScheme,
-        uri.toString,
-        tokenProvider,
-        location,
-        PathOperation.PATH_CREATE_TABLE,
-        cred)
+      // Get credentials for the external location from Delta REST API
+      try {
+        val response = deltaRestTablesApi.getTemporaryPathCredentials(
+          location,
+          "PATH_CREATE_TABLE"
+        )
+        val storageCredentials = response.getStorageCredentials
+        if (storageCredentials != null && !storageCredentials.isEmpty) {
+          val cred = storageCredentials.get(0)
+          val locationUri = new URI(location)
+          val scheme = locationUri.getScheme
+          // Generate a temporary table ID for credential tracking
+          val tempTableId = java.util.UUID.randomUUID().toString
+          val credProps = io.unitycatalog.spark.auth.CredPropsUtil.createTableCredProps(
+            renewCredEnabled,
+            scheme,
+            uri.toString,
+            tokenProvider,
+            tempTableId,
+            io.unitycatalog.client.model.TableOperation.READ_WRITE,
+            cred
+          )
+          credProps.asScala.foreach { case (key, value) =>
+            newProps.put(key, value)
+            newProps.put(TableCatalog.OPTION_PREFIX + key, value)
+          }
+        }
+      } catch {
+        case e: Exception =>
+          logWarning(s"Failed to get credentials for external table location $location: ${e.getMessage}")
+      }
 
-      UCSingleCatalog.setCredentialProps(newProps, credentialProps)
       delegate.createTable(ident, columns, partitions, newProps)
     } else {
       // TODO: for path-based tables, Spark should generate a location property using the qualified
@@ -197,7 +269,10 @@ class UCSingleCatalog
     throw new UnsupportedOperationException("Altering a table is not supported yet")
   }
 
-  override def dropTable(ident: Identifier): Boolean = delegate.dropTable(ident)
+  override def dropTable(ident: Identifier): Boolean = {
+    UCSingleCatalog.checkUnsupportedNestedNamespace(ident.namespace())
+    delegate.dropTable(ident)
+  }
 
   override def renameTable(oldIdent: Identifier, newIdent: Identifier): Unit = {
     throw new UnsupportedOperationException("Renaming a table is not supported yet")
@@ -279,15 +354,24 @@ private class UCProxy(
     uri: URI,
     tokenProvider: TokenProvider,
     renewCredEnabled: Boolean,
-    apiClient: ApiClient,
-    tablesApi: TablesApi,
-    temporaryCredentialsApi: TemporaryCredentialsApi) extends TableCatalog with SupportsNamespaces {
+    apiClient: ApiClient) extends TableCatalog with SupportsNamespaces {
   private[this] var name: String = null
-  private[this] var schemasApi: SchemasApi = null
+  private[this] var tablesApi: TablesApi = null
+  private[this] var deltaRestTablesApi: DeltaRestTablesApi = null
+  private[this] var deltaRestNamespacesApi: DeltaRestNamespacesApi = null
 
   override def initialize(name: String, options: CaseInsensitiveStringMap): Unit = {
     this.name = name
-    schemasApi = new SchemasApi(apiClient)
+
+    // Create Unity Catalog TablesApi for non-Delta/non-Iceberg tables
+    tablesApi = new TablesApi(apiClient)
+
+    // Create Delta REST API client with Delta REST endpoint
+    val deltaRestUri = uri.toString + "/api/2.1/unity-catalog/delta-rest/v1"
+    val deltaRestApiClient = new DeltaRestApiClient()
+    deltaRestApiClient.updateBaseUri(deltaRestUri)
+    deltaRestTablesApi = new DeltaRestTablesApi(deltaRestApiClient)
+    deltaRestNamespacesApi = new DeltaRestNamespacesApi(deltaRestApiClient)
   }
 
   override def name(): String = {
@@ -300,78 +384,82 @@ private class UCProxy(
 
     val catalogName = this.name
     val schemaName = namespace.head
-    val maxResults = 0
     val pageToken = null
-    val response: ListTablesResponse = tablesApi.listTables(catalogName, schemaName, maxResults, pageToken)
-    response.getTables.toSeq.map(table => Identifier.of(namespace, table.getName)).toArray
+    val response: DeltaRestListTablesResponse = deltaRestTablesApi.listTables(catalogName, schemaName, pageToken)
+    response.getIdentifiers.asScala.map(tableIdent => Identifier.of(namespace, tableIdent.getName)).toArray
   }
 
   override def loadTable(ident: Identifier): Table = {
-    val t = try {
-      tablesApi.getTable(
-        UCSingleCatalog.fullTableNameForApi(this.name, ident),
-        /* readStreamingTableAsManaged = */ true,
-        /* readMaterializedViewAsManaged = */ true)
+    val response = try {
+      deltaRestTablesApi.loadTable(
+        this.name,
+        ident.namespace().head,
+        ident.name(),
+        /* withCredentials = */ true)
     } catch {
-      case e: ApiException if e.getCode == 404 =>
+      case e: io.unitycatalog.client.deltarest.ApiException if e.getCode == 404 =>
         throw new NoSuchTableException(ident)
     }
-    val identifier = TableIdentifier(t.getName, Some(t.getSchemaName), Some(t.getCatalogName))
-    val partitionCols = scala.collection.mutable.ArrayBuffer.empty[(String, Int)]
-    val fields = t.getColumns.asScala.map { col =>
-      Option(col.getPartitionIndex).foreach { index =>
-        partitionCols += col.getName -> index
-      }
-      StructField(col.getName, DataType.fromDDL(col.getTypeText), col.getNullable)
-        .withComment(col.getComment)
-    }.toArray
-    val locationUri = CatalogUtils.stringToURI(t.getStorageLocation)
-    val tableId = t.getTableId
-    var tableOp = TableOperation.READ_WRITE
-    val temporaryCredentials = {
-      try {
-        temporaryCredentialsApi
-          .generateTemporaryTableCredentials(
-            // TODO: at this time, we don't know if the table will be read or written. For now we always
-            //       request READ_WRITE credentials as the server doesn't distinguish between READ and
-            //       READ_WRITE credentials as of today. When loading a table, Spark should tell if it's
-            //       for read or write, we can request the proper credential after fixing Spark.
-            new GenerateTemporaryTableCredential().tableId(tableId).operation(tableOp)
-          )
-      } catch {
-        case _: ApiException =>
-          tableOp = TableOperation.READ
-          temporaryCredentialsApi
-            .generateTemporaryTableCredentials(
-              new GenerateTemporaryTableCredential().tableId(tableId).operation(tableOp)
-            )
-      }
-    }
 
-    val extraSerdeProps = CredPropsUtil.createTableCredProps(
-      renewCredEnabled,
-      locationUri.getScheme,
-      uri.toString,
-      tokenProvider,
-      tableId,
-      tableOp,
-      temporaryCredentials,
-    )
+    val metadata = response.getMetadata
+    val identifier = TableIdentifier(ident.name(), Some(ident.namespace().head), Some(this.name))
+    val partitionCols = scala.collection.mutable.ArrayBuffer.empty[(String, Int)]
+
+    // Convert Delta REST schema to Spark schema
+    val fields = metadata.getSchema.asScala.zipWithIndex.map { case (deltaCol, index) =>
+      val structField = deltaCol.getTypeJson
+      // Serialize type object to JSON string for Spark's DataType.fromJson
+      // For primitive types, we need to wrap the type name in quotes to make it valid JSON
+      val typeJson = structField.getType match {
+        case s: String =>
+          // Wrap string in quotes to make it valid JSON: "string" becomes "\"string\""
+          s"""\"$s\""""
+        case obj =>
+          // Complex types are already objects, serialize them as-is
+          new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(obj)
+      }
+      val dataType = DataType.fromJson(typeJson)
+      // Check if this is a partition column (assuming partition columns are marked in properties)
+      StructField(structField.getName, dataType, structField.getNullable)
+    }.toArray
+
+    val locationUri = CatalogUtils.stringToURI(metadata.getLocation)
+    val tableId = metadata.getTableUuid.toString
+
+    // Get storage credentials from the response
+    val storageCredentials = response.getStorageCredentials
+    val extraSerdeProps = if (storageCredentials != null && !storageCredentials.isEmpty) {
+      val cred = storageCredentials.get(0)
+      val scheme = locationUri.getScheme
+      // Use CredPropsUtil to get proper Hadoop config
+      val credProps = io.unitycatalog.spark.auth.CredPropsUtil.createTableCredProps(
+        renewCredEnabled,
+        scheme,
+        uri.toString,
+        tokenProvider,
+        tableId,
+        io.unitycatalog.client.model.TableOperation.READ,
+        cred
+      )
+      credProps.asScala.toMap
+    } else {
+      Map.empty[String, String]
+    }
 
     val sparkTable = CatalogTable(
       identifier,
-      tableType = if (t.getTableType == TableType.MANAGED) {
+      tableType = if (metadata.getTableType == DeltaRestTableMetadata.TableTypeEnum.MANAGED) {
         CatalogTableType.MANAGED
       } else {
         CatalogTableType.EXTERNAL
       },
       storage = CatalogStorageFormat.empty.copy(
         locationUri = Some(locationUri),
-        properties = t.getProperties.asScala.toMap ++ extraSerdeProps
+        properties = metadata.getProperties.asScala.toMap ++ extraSerdeProps
       ),
       schema = StructType(fields),
-      provider = Some(t.getDataSourceFormat.getValue.toLowerCase()),
-      createTime = t.getCreatedAt,
+      provider = Some(metadata.getDataSourceFormat.getValue.toLowerCase()),
+      createTime = metadata.getCreateTime,
       tracksPartitionsInCatalog = false,
       partitionColumnNames = partitionCols.sortBy(_._2).map(_._1).toSeq
     )
@@ -388,50 +476,77 @@ private class UCProxy(
     UCSingleCatalog.checkUnsupportedNestedNamespace(ident.namespace())
     assert(properties.get(TableCatalog.PROP_PROVIDER) != null)
 
-    val createTable = new CreateTable()
-    createTable.setName(ident.name())
-    createTable.setSchemaName(ident.namespace().head)
-    createTable.setCatalogName(this.name)
-
     val hasExternalClause = properties.containsKey(TableCatalog.PROP_EXTERNAL)
     val storageLocation = properties.get(TableCatalog.PROP_LOCATION)
     assert(storageLocation != null, "location should either be user specified or system generated.")
     val isManagedLocation = Option(properties.get(TableCatalog.PROP_IS_MANAGED_LOCATION))
       .exists(_.equalsIgnoreCase("true"))
     val format = properties.get("provider")
-    if (isManagedLocation) {
+
+    // Determine table type
+    val tableType = if (isManagedLocation) {
       assert(!hasExternalClause, "location is only generated for managed tables.")
-      if (!format.equalsIgnoreCase(DataSourceFormat.DELTA.name)) {
+      if (!format.equalsIgnoreCase("DELTA")) {
         throw new ApiException("Unity Catalog does not support non-Delta managed table.")
       }
-      createTable.setTableType(TableType.MANAGED)
+      DeltaRestCreateTableRequest.TableTypeEnum.MANAGED
     } else {
-      createTable.setTableType(TableType.EXTERNAL)
+      DeltaRestCreateTableRequest.TableTypeEnum.EXTERNAL
     }
-    createTable.setStorageLocation(storageLocation)
 
-    val columns: Seq[ColumnInfo] = schema.fields.toSeq.zipWithIndex.map { case (field, i) =>
-      val column = new ColumnInfo()
-      column.setName(field.name)
-      if (field.getComment().isDefined) {
-        column.setComment(field.getComment.get)
+    // Convert schema to Delta REST format
+    val deltaColumns: Seq[DeltaRestDeltaColumn] = schema.fields.toSeq.zipWithIndex.map { case (field, i) =>
+      val structField = new DeltaRestStructField()
+      structField.setName(field.name)
+      // Use Spark's JSON representation for the type
+      // For primitive types, Spark's json property returns a quoted string like "\"integer\""
+      // We need to strip the quotes to get just the type name
+      val jsonType = field.dataType.json
+      val typeValue = if (jsonType.startsWith("\"") && jsonType.endsWith("\"")) {
+        // Remove surrounding quotes for primitive types
+        jsonType.substring(1, jsonType.length - 1)
+      } else {
+        // Complex types (structs, arrays, maps) - use as-is
+        jsonType
       }
-      column.setNullable(field.nullable)
-      column.setTypeText(field.dataType.simpleString)
-      column.setTypeName(convertDataTypeToTypeName(field.dataType))
-      column.setTypeJson(field.dataType.json)
-      column.setPosition(i)
-      column
+      structField.setType(typeValue)
+      structField.setNullable(field.nullable)
+      if (field.getComment().isDefined) {
+        structField.setComment(field.getComment.get)
+      }
+      structField.setMetadata(new java.util.HashMap[String, AnyRef]())
+
+      val deltaColumn = new DeltaRestDeltaColumn()
+      deltaColumn.setTypeJson(structField)
+      deltaColumn
     }
-    val comment = Option(properties.get(TableCatalog.PROP_COMMENT))
-    comment.foreach(createTable.setComment(_))
-    createTable.setColumns(columns)
-    createTable.setDataSourceFormat(convertDatasourceFormat(format))
+
+    // Create Delta protocol
+    val protocol = new DeltaRestDeltaProtocol()
+    protocol.setMinReaderVersion(1)
+    protocol.setMinWriterVersion(2)
+
+    // Create Delta REST request
+    val createTableRequest = new DeltaRestCreateTableRequest()
+    createTableRequest.setName(ident.name())
+    createTableRequest.setLocation(storageLocation)
+    createTableRequest.setTableType(tableType)
+    createTableRequest.setDataSourceFormat(convertDatasourceFormatToDeltaRest(format))
+    createTableRequest.setSchema(deltaColumns.asJava)
+    createTableRequest.setProtocol(protocol)
+
+    // Set comment if present in properties
+    val comment = properties.get(TableCatalog.PROP_COMMENT)
+    if (comment != null) {
+      createTableRequest.setComment(comment)
+    }
+
     // Do not send the V2 table properties as they are made part of the `createTable` already.
     val propertiesToServer =
       properties.view.filterKeys(!UCTableProperties.V2_TABLE_PROPERTIES.contains(_)).toMap
-    createTable.setProperties(propertiesToServer)
-    tablesApi.createTable(createTable)
+    createTableRequest.setProperties(propertiesToServer.asJava)
+
+    deltaRestTablesApi.createTable(this.name, ident.namespace().head, createTableRequest)
     loadTable(ident)
   }
 
@@ -445,6 +560,20 @@ private class UCProxy(
       case "TEXT" => DataSourceFormat.TEXT
       case "AVRO" => DataSourceFormat.AVRO
       case _ => throw new ApiException("DataSourceFormat not supported: " + format)
+    }
+  }
+
+  private def convertDatasourceFormatToDeltaRest(format: String): DeltaRestDataSourceFormat = {
+    format.toUpperCase match {
+      case "DELTA" => DeltaRestDataSourceFormat.DELTA
+      case "ICEBERG" => DeltaRestDataSourceFormat.ICEBERG
+      case "PARQUET" => DeltaRestDataSourceFormat.PARQUET
+      case "CSV" => DeltaRestDataSourceFormat.CSV
+      case "JSON" => DeltaRestDataSourceFormat.JSON
+      case "ORC" => DeltaRestDataSourceFormat.ORC
+      case "TEXT" => DeltaRestDataSourceFormat.TEXT
+      case "AVRO" => DeltaRestDataSourceFormat.AVRO
+      case _ => throw new ApiException("DataSourceFormat not supported for Delta REST: " + format)
     }
   }
 
@@ -470,8 +599,9 @@ private class UCProxy(
   }
 
   override def dropTable(ident: Identifier): Boolean = {
-    val ret = tablesApi.deleteTable(UCSingleCatalog.fullTableNameForApi(this.name, ident))
-    if (ret == 200) true else false
+    UCSingleCatalog.checkUnsupportedNestedNamespace(ident.namespace())
+    deltaRestTablesApi.deleteTable(this.name, ident.namespace().head, ident.name())
+    true
   }
 
   override def renameTable(oldIdent: Identifier, newIdent: Identifier): Unit = {
@@ -479,8 +609,9 @@ private class UCProxy(
   }
 
   override def listNamespaces(): Array[Array[String]] = {
-    schemasApi.listSchemas(name, 0, null).getSchemas.asScala.map { schema =>
-      Array(schema.getName)
+    val response: DeltaRestListNamespacesResponse = deltaRestNamespacesApi.listNamespaces(name, null)
+    response.getNamespaces.asScala.map { ns =>
+      ns.asScala.toArray
     }.toArray
   }
 
@@ -490,33 +621,22 @@ private class UCProxy(
 
   override def loadNamespaceMetadata(namespace: Array[String]): util.Map[String, String] = {
     UCSingleCatalog.checkUnsupportedNestedNamespace(namespace)
-    val schema = try {
-      schemasApi.getSchema(name + "." + namespace(0))
+    val response = try {
+      deltaRestNamespacesApi.loadNamespace(name, namespace(0))
     } catch {
-      case e: ApiException if e.getCode == 404 =>
+      case e: io.unitycatalog.client.deltarest.ApiException if e.getCode == 404 =>
         throw new NoSuchNamespaceException(namespace)
     }
-    // flatten the schema properties to a map, with the key prefixed by "properties:"
-    val metadata = schema.getProperties.asScala.map {
-      case (k, v) =>  SchemaInfo.JSON_PROPERTY_PROPERTIES + ":" + k -> v
-    }
-    metadata(SchemaInfo.JSON_PROPERTY_NAME) = schema.getName
-    metadata(SchemaInfo.JSON_PROPERTY_CATALOG_NAME) = schema.getCatalogName
-    metadata(SchemaInfo.JSON_PROPERTY_COMMENT) = schema.getComment
-    metadata(SchemaInfo.JSON_PROPERTY_FULL_NAME) = schema.getFullName
-    metadata(SchemaInfo.JSON_PROPERTY_CREATED_AT) = if (schema.getCreatedAt != null) {schema.getCreatedAt.toString} else {"null"}
-    metadata(SchemaInfo.JSON_PROPERTY_UPDATED_AT) = if (schema.getUpdatedAt != null) {schema.getUpdatedAt.toString} else {"null"}
-    metadata(SchemaInfo.JSON_PROPERTY_SCHEMA_ID) = schema.getSchemaId
-    metadata.asJava
+    // Return namespace properties
+    response.getProperties.asScala.toMap.asJava
   }
 
   override def createNamespace(namespace: Array[String], metadata: util.Map[String, String]): Unit = {
     UCSingleCatalog.checkUnsupportedNestedNamespace(namespace)
-    val createSchema = new CreateSchema()
-    createSchema.setCatalogName(this.name)
-    createSchema.setName(namespace.head)
-    createSchema.setProperties(metadata)
-    schemasApi.createSchema(createSchema)
+    val createRequest = new DeltaRestCreateNamespaceRequest()
+    createRequest.setNamespace(namespace.toSeq.asJava)
+    createRequest.setProperties(metadata)
+    deltaRestNamespacesApi.createNamespace(name, createRequest)
   }
 
   override def alterNamespace(namespace: Array[String], changes: NamespaceChange*): Unit = {
@@ -525,7 +645,7 @@ private class UCProxy(
 
   override def dropNamespace(namespace: Array[String], cascade: Boolean): Boolean = {
     UCSingleCatalog.checkUnsupportedNestedNamespace(namespace)
-    schemasApi.deleteSchema(name + "." + namespace.head, cascade)
+    deltaRestNamespacesApi.deleteNamespace(name, namespace.head)
     true
   }
 }
