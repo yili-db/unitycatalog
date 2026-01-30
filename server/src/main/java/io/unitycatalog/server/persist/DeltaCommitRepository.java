@@ -221,42 +221,54 @@ public class DeltaCommitRepository {
    *     exceeded
    */
   public void postCommit(DeltaCommit commit) {
-    serverProperties.checkManagedTableEnabled();
-    validateCommit(commit);
     TransactionManager.executeWithTransaction(
         sessionFactory,
         session -> {
-          UUID tableId = UUID.fromString(commit.getTableId());
-          TableInfoDAO tableInfoDAO = session.get(TableInfoDAO.class, tableId);
-          if (tableInfoDAO == null) {
-            throw new BaseException(ErrorCode.NOT_FOUND, "Table not found: " + commit.getTableId());
-          }
-          validateTableForCommit(commit, tableInfoDAO);
-          List<DeltaCommitDAO> firstAndLastCommits = getFirstAndLastCommits(session, tableId);
-          if (firstAndLastCommits.isEmpty()) {
-            handleOnboardingCommit(session, tableId, tableInfoDAO, commit);
-          } else {
-            DeltaCommitDAO firstCommitDAO = firstAndLastCommits.get(0);
-            DeltaCommitDAO lastCommitDAO = firstAndLastCommits.get(1);
-            assert firstCommitDAO.getCommitVersion() <= lastCommitDAO.getCommitVersion();
-            if (commit.getCommitInfo() == null) {
-              // This is already checked in validateCommit()
-              assert commit.getLatestBackfilledVersion() != null;
-              handleBackfillOnlyCommit(
-                  session,
-                  tableId,
-                  commit.getLatestBackfilledVersion(),
-                  firstCommitDAO.getCommitVersion(),
-                  lastCommitDAO.getCommitVersion());
-            } else {
-              handleNormalCommit(
-                  session, tableId, tableInfoDAO, commit, firstCommitDAO, lastCommitDAO);
-            }
-          }
+          postCommit(session, commit);
           return null;
         },
         "Error committing to table: " + commit.getTableId(),
         /* readOnly = */ false);
+  }
+
+  /**
+   * Session-aware version of postCommit for use within an existing transaction.
+   *
+   * @param session the Hibernate session
+   * @param commit the DeltaCommit containing commit information
+   * @throws BaseException if the commit is invalid, table is not found, or commit limits are
+   *     exceeded
+   */
+  public void postCommit(Session session, DeltaCommit commit) {
+    serverProperties.checkManagedTableEnabled();
+    validateCommit(commit);
+
+    UUID tableId = UUID.fromString(commit.getTableId());
+    TableInfoDAO tableInfoDAO = session.get(TableInfoDAO.class, tableId);
+    if (tableInfoDAO == null) {
+      throw new BaseException(ErrorCode.NOT_FOUND, "Table not found: " + commit.getTableId());
+    }
+    validateTableForCommit(commit, tableInfoDAO);
+    List<DeltaCommitDAO> firstAndLastCommits = getFirstAndLastCommits(session, tableId);
+    if (firstAndLastCommits.isEmpty()) {
+      handleOnboardingCommit(session, tableId, tableInfoDAO, commit);
+    } else {
+      DeltaCommitDAO firstCommitDAO = firstAndLastCommits.get(0);
+      DeltaCommitDAO lastCommitDAO = firstAndLastCommits.get(1);
+      assert firstCommitDAO.getCommitVersion() <= lastCommitDAO.getCommitVersion();
+      if (commit.getCommitInfo() == null) {
+        // This is already checked in validateCommit()
+        assert commit.getLatestBackfilledVersion() != null;
+        handleBackfillOnlyCommit(
+            session,
+            tableId,
+            commit.getLatestBackfilledVersion(),
+            firstCommitDAO.getCommitVersion(),
+            lastCommitDAO.getCommitVersion());
+      } else {
+        handleNormalCommit(session, tableId, tableInfoDAO, commit, firstCommitDAO, lastCommitDAO);
+      }
+    }
   }
 
   /**

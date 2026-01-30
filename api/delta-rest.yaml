@@ -1,0 +1,1767 @@
+openapi: 3.1.1
+servers:
+  - url: "{scheme}://{host}:{port}/api/2.1/unity-catalog/delta-rest/v1"
+    description: Configurable Delta REST Catalog server 
+    variables:
+      scheme:
+        description: The URI scheme (http or https)
+        default: https
+        enum:
+          - http
+          - https
+      host:
+        description: The server host address
+        default: localhost
+      port:
+        description: The server port number
+        default: "8080"
+  - url: http://localhost:8080/api/2.1/unity-catalog/delta-rest/v1
+    description: Localhost reference server for Delta REST Catalog API
+info:
+  title: Delta REST Catalog API
+  summary: REST API for Delta Lake table catalog operations
+  version: '0.1'
+  description: |
+    Delta REST Catalog (DRC) API follows the Apache Iceberg REST Catalog (IRC) API style.
+    Unlike the actual IRC APIs implemented for UniForm and Managed Iceberg tables, this API
+    is Delta-centric and does not provide a translation layer to make Delta tables work like
+    Iceberg tables. Clients directly communicate Delta metadata to servers without any translation.
+
+tags:
+  - name: Configuration
+    description: |
+      Configuration endpoints for getting catalog configuration and supported endpoints.
+  - name: Tables
+    description: |
+      Table operations for Delta tables including CRUD operations, staging tables, and credentials.
+  - name: Namespaces
+    description: |
+      Namespace operations corresponding to Unity Catalog schemas.
+  - name: Metrics
+    description: |
+      Metrics reporting endpoints for telemetry.
+
+paths:
+  /config:
+    get:
+      tags:
+        - Configuration
+      operationId: getConfig
+      summary: Get catalog configuration
+      description: |
+        Get catalog configuration and supported endpoints. The server returns configuration
+        overrides and a list of supported endpoints that the client can use.
+      parameters:
+        - name: catalog
+          in: query
+          description: Catalog name
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Configuration retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogConfig'
+              example:
+                overrides:
+                  prefix: "catalogs/my_catalog"
+                endpoints:
+                  - "POST /catalogs/{catalog}/namespaces/{namespace}/tables"
+                  - "GET /catalogs/{catalog}/namespaces/{namespace}/tables/{table}"
+                  - "POST /catalogs/{catalog}/namespaces/{namespace}/tables/{table}"
+                  - "DELETE /catalogs/{catalog}/namespaces/{namespace}/tables/{table}"
+                managed-tables-required-features:
+                  - "appendOnly"
+                  - "catalogManaged"
+                  - "deletionVectors"
+                managed-tables-suggested-features:
+                  - "rowTracking"
+                  - "domainMetadata"
+        '400':
+          $ref: '#/components/responses/BadRequestErrorResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedResponse'
+        '403':
+          $ref: '#/components/responses/ForbiddenResponse'
+        '500':
+          $ref: '#/components/responses/InternalServerErrorResponse'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailableResponse'
+
+  /catalogs/{catalog}/namespaces/{namespace}/staging-tables:
+    parameters:
+      - $ref: '#/components/parameters/catalog'
+      - $ref: '#/components/parameters/namespace'
+    post:
+      tags:
+        - Tables
+      operationId: createStagingTable
+      summary: Create a staging table
+      description: |
+        Create a staging table that will become a catalog managed table. The server allocates
+        a table UUID and a storage location for the table. This is a Delta-specific endpoint.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateStagingTableRequest'
+      responses:
+        '200':
+          description: Staging table created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StagingTableResponse'
+              example:
+                table-id: "123e4567-e89b-12d3-a456-426614174000"
+                table-type: "MANAGED"
+                location: "s3://bucket/warehouse/catalog/schema/table"
+                storage-credentials:
+                  - url: "s3://bucket/warehouse/catalog/schema/table/"
+                    config:
+                      s3.access-key-id: "AK...example"
+                      s3.secret-access-key: "ExampleKey"
+                      s3.session-token: "token"
+                      expiration-time-ms: 1234567890000
+        '400':
+          $ref: '#/components/responses/BadRequestErrorResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedResponse'
+        '403':
+          $ref: '#/components/responses/ForbiddenResponse'
+        '409':
+          $ref: '#/components/responses/ConflictResponse'
+        '500':
+          $ref: '#/components/responses/InternalServerErrorResponse'
+
+  /catalogs/{catalog}/namespaces/{namespace}/staging-tables/{table_id}/credentials:
+    parameters:
+      - $ref: '#/components/parameters/catalog'
+      - $ref: '#/components/parameters/namespace'
+      - name: table_id
+        in: path
+        description: Table UUID (not name) - required because name is not unique for staging tables
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      tags:
+        - Tables
+      operationId: getStagingTableCredentials
+      summary: Get staging table credentials
+      description: |
+        Get temporary credentials for writing staging table data. This uses the UUID of the
+        staging table, not the name, because multiple pending staging tables can share the same name.
+      responses:
+        '200':
+          description: Credentials retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CredentialsResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedResponse'
+        '403':
+          $ref: '#/components/responses/ForbiddenResponse'
+        '404':
+          $ref: '#/components/responses/NotFoundResponse'
+
+  /catalogs/{catalog}/namespaces/{namespace}/tables:
+    parameters:
+      - $ref: '#/components/parameters/catalog'
+      - $ref: '#/components/parameters/namespace'
+    post:
+      tags:
+        - Tables
+      operationId: createTable
+      summary: Create a table
+      description: |
+        Create a new Delta table in the specified namespace.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTableRequest'
+      responses:
+        '200':
+          description: Table created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoadTableResponse'
+        '400':
+          $ref: '#/components/responses/BadRequestErrorResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedResponse'
+        '403':
+          $ref: '#/components/responses/ForbiddenResponse'
+        '409':
+          $ref: '#/components/responses/ConflictResponse'
+    get:
+      tags:
+        - Tables
+      operationId: listTables
+      summary: List tables
+      description: |
+        List all tables in a namespace.
+      parameters:
+        - name: pageToken
+          in: query
+          description: Pagination token
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Tables listed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListTablesResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedResponse'
+        '403':
+          $ref: '#/components/responses/ForbiddenResponse'
+        '404':
+          $ref: '#/components/responses/NotFoundResponse'
+
+  /catalogs/{catalog}/namespaces/{namespace}/tables/{table}:
+    parameters:
+      - $ref: '#/components/parameters/catalog'
+      - $ref: '#/components/parameters/namespace'
+      - $ref: '#/components/parameters/table'
+    get:
+      tags:
+        - Tables
+      operationId: loadTable
+      summary: Load table metadata
+      description: |
+        Load table metadata including schema, protocol, properties, and optionally credentials.
+      parameters:
+        - name: with_credentials
+          in: query
+          description: If true, include temporary storage credentials in the response
+          required: false
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '200':
+          description: Table loaded successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoadTableResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedResponse'
+        '403':
+          $ref: '#/components/responses/ForbiddenResponse'
+        '404':
+          $ref: '#/components/responses/NotFoundResponse'
+    post:
+      tags:
+        - Tables
+      operationId: updateTable
+      summary: Update table
+      description: |
+        Update table properties, schema, protocol, or commit Delta changes.
+        This endpoint corresponds to the CCv2 commit specification.
+        Unlike IRC, this endpoint does not support table creation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateTableRequest'
+      responses:
+        '200':
+          description: Table updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoadTableResponse'
+        '400':
+          description: Bad request or requirement not met
+        '401':
+          $ref: '#/components/responses/UnauthorizedResponse'
+        '403':
+          $ref: '#/components/responses/ForbiddenResponse'
+        '404':
+          $ref: '#/components/responses/NotFoundResponse'
+        '409':
+          $ref: '#/components/responses/ConflictResponse'
+    delete:
+      tags:
+        - Tables
+      operationId: deleteTable
+      summary: Delete a table
+      description: |
+        Delete a table from the catalog.
+      responses:
+        '204':
+          description: Table deleted successfully
+        '401':
+          $ref: '#/components/responses/UnauthorizedResponse'
+        '403':
+          $ref: '#/components/responses/ForbiddenResponse'
+        '404':
+          $ref: '#/components/responses/NotFoundResponse'
+    head:
+      tags:
+        - Tables
+      operationId: tableExists
+      summary: Check if table exists
+      description: |
+        Check if the specified table exists.
+      responses:
+        '204':
+          description: Table exists
+        '404':
+          description: Table does not exist
+
+  /catalogs/{catalog}/namespaces/{namespace}/tables/{table}/credentials:
+    parameters:
+      - $ref: '#/components/parameters/catalog'
+      - $ref: '#/components/parameters/namespace'
+      - $ref: '#/components/parameters/table'
+    get:
+      tags:
+        - Tables
+      operationId: getTableCredentials
+      summary: Get table credentials
+      description: |
+        Get temporary credentials for accessing table data (vended credentials).
+      responses:
+        '200':
+          description: Credentials retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CredentialsResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedResponse'
+        '403':
+          $ref: '#/components/responses/ForbiddenResponse'
+        '404':
+          $ref: '#/components/responses/NotFoundResponse'
+
+  /catalogs/{catalog}/tables/rename:
+    parameters:
+      - $ref: '#/components/parameters/catalog'
+    post:
+      tags:
+        - Tables
+      operationId: renameTable
+      summary: Rename a table
+      description: |
+        Rename a table. Can also move between namespaces within the same catalog.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RenameTableRequest'
+      responses:
+        '204':
+          description: Table renamed successfully
+        '400':
+          $ref: '#/components/responses/BadRequestErrorResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedResponse'
+        '403':
+          $ref: '#/components/responses/ForbiddenResponse'
+        '404':
+          description: Source table not found
+        '409':
+          $ref: '#/components/responses/ConflictResponse'
+
+  /temporary-path-credentials:
+    get:
+      tags:
+        - Tables
+      operationId: getTemporaryPathCredentials
+      summary: Get temporary path credentials
+      description: |
+        Get temporary credentials of a storage path for creating a new external table.
+        This path will later be registered in UC as a real external table.
+        This is a Delta-specific endpoint. Note: no {prefix} as this is not part of a catalog.
+      parameters:
+        - name: location
+          in: query
+          description: Storage path for the external table
+          required: true
+          schema:
+            type: string
+        - name: operation
+          in: query
+          description: Operation type
+          required: true
+          schema:
+            type: string
+            enum:
+              - UNKNOWN_PATH_OPERATION
+              - PATH_READ
+              - PATH_READ_WRITE
+              - PATH_CREATE_TABLE
+      responses:
+        '200':
+          description: Credentials retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CredentialsResponse'
+        '400':
+          $ref: '#/components/responses/BadRequestErrorResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedResponse'
+        '403':
+          $ref: '#/components/responses/ForbiddenResponse'
+
+  /catalogs/{catalog}/namespaces:
+    parameters:
+      - $ref: '#/components/parameters/catalog'
+    get:
+      tags:
+        - Namespaces
+      operationId: listNamespaces
+      summary: List namespaces
+      description: |
+        List all namespaces (schemas) in a catalog.
+      parameters:
+        - name: pageToken
+          in: query
+          description: Pagination token
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Namespaces listed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListNamespacesResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedResponse'
+        '403':
+          $ref: '#/components/responses/ForbiddenResponse'
+    post:
+      tags:
+        - Namespaces
+      operationId: createNamespace
+      summary: Create a namespace
+      description: |
+        Create a new namespace (schema) in the catalog.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateNamespaceRequest'
+      responses:
+        '200':
+          description: Namespace created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NamespaceResponse'
+        '400':
+          $ref: '#/components/responses/BadRequestErrorResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedResponse'
+        '403':
+          $ref: '#/components/responses/ForbiddenResponse'
+        '409':
+          $ref: '#/components/responses/ConflictResponse'
+
+  /catalogs/{catalog}/namespaces/{namespace}:
+    parameters:
+      - $ref: '#/components/parameters/catalog'
+      - $ref: '#/components/parameters/namespace'
+    get:
+      tags:
+        - Namespaces
+      operationId: loadNamespace
+      summary: Load namespace metadata
+      description: |
+        Load namespace (schema) metadata.
+      responses:
+        '200':
+          description: Namespace loaded successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NamespaceResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedResponse'
+        '403':
+          $ref: '#/components/responses/ForbiddenResponse'
+        '404':
+          $ref: '#/components/responses/NotFoundResponse'
+    delete:
+      tags:
+        - Namespaces
+      operationId: deleteNamespace
+      summary: Delete a namespace
+      description: |
+        Delete a namespace (schema) from the catalog.
+      responses:
+        '204':
+          description: Namespace deleted successfully
+        '401':
+          $ref: '#/components/responses/UnauthorizedResponse'
+        '403':
+          $ref: '#/components/responses/ForbiddenResponse'
+        '404':
+          $ref: '#/components/responses/NotFoundResponse'
+    head:
+      tags:
+        - Namespaces
+      operationId: namespaceExists
+      summary: Check if namespace exists
+      description: |
+        Check if the specified namespace exists.
+      responses:
+        '204':
+          description: Namespace exists
+        '404':
+          description: Namespace does not exist
+
+  /catalogs/{catalog}/namespaces/{namespace}/properties:
+    parameters:
+      - $ref: '#/components/parameters/catalog'
+      - $ref: '#/components/parameters/namespace'
+    post:
+      tags:
+        - Namespaces
+      operationId: updateNamespaceProperties
+      summary: Update namespace properties
+      description: |
+        Update namespace (schema) properties.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateNamespacePropertiesRequest'
+      responses:
+        '200':
+          description: Properties updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdateNamespacePropertiesResponse'
+        '400':
+          $ref: '#/components/responses/BadRequestErrorResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedResponse'
+        '403':
+          $ref: '#/components/responses/ForbiddenResponse'
+        '404':
+          $ref: '#/components/responses/NotFoundResponse'
+
+  /catalogs/{catalog}/namespaces/{namespace}/tables/{table}/metrics:
+    parameters:
+      - $ref: '#/components/parameters/catalog'
+      - $ref: '#/components/parameters/namespace'
+      - $ref: '#/components/parameters/table'
+    post:
+      tags:
+        - Metrics
+      operationId: reportMetrics
+      summary: Report query metrics
+      description: |
+        Report query metrics (telemetry) for a table.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReportMetricsRequest'
+      responses:
+        '204':
+          description: Metrics received successfully
+        '400':
+          $ref: '#/components/responses/BadRequestErrorResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedResponse'
+        '403':
+          $ref: '#/components/responses/ForbiddenResponse'
+        '404':
+          $ref: '#/components/responses/NotFoundResponse'
+
+components:
+  parameters:
+    catalog:
+      name: catalog
+      in: path
+      description: Catalog name
+      required: true
+      schema:
+        type: string
+    namespace:
+      name: namespace
+      in: path
+      description: Schema/namespace name
+      required: true
+      schema:
+        type: string
+    table:
+      name: table
+      in: path
+      description: Table name
+      required: true
+      schema:
+        type: string
+
+  schemas:
+    # Configuration schemas
+    CatalogConfig:
+      type: object
+      properties:
+        overrides:
+          type: object
+          description: Configuration overrides including the prefix to use for subsequent requests
+          properties:
+            prefix:
+              type: string
+              description: The prefix to use in subsequent API calls (e.g., "catalogs/my_catalog")
+          additionalProperties:
+            type: string
+        endpoints:
+          type: array
+          description: List of supported endpoints
+          items:
+            type: string
+        managed-tables-required-features:
+          type: array
+          description: |
+            Server requires that at least these Delta table features should be enabled
+            for managed tables
+          items:
+            type: string
+        managed-tables-suggested-features:
+          type: array
+          description: |
+            Server suggests that these Delta table features to be enabled for managed
+            tables if supported by client
+          items:
+            type: string
+      required:
+        - overrides
+        - endpoints
+
+    # Table schemas
+    CreateStagingTableRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          description: The table name
+      required:
+        - name
+      example:
+        name: "sales"
+
+    StagingTableResponse:
+      type: object
+      properties:
+        table-id:
+          type: string
+          format: uuid
+          description: Table UUID allocated by UC
+        table-type:
+          type: string
+          enum:
+            - MANAGED
+          description: Table type (always MANAGED for staging tables)
+        location:
+          type: string
+          description: UC allocated storage location for this table
+        storage-credentials:
+          type: array
+          description: Temporary credentials for initial commit
+          items:
+            $ref: '#/components/schemas/StorageCredential'
+      required:
+        - table-id
+        - table-type
+        - location
+
+    CreateTableRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          description: The table name
+        location:
+          type: string
+          description: Storage location
+        table-type:
+          type: string
+          description: Table type (MANAGED or EXTERNAL)
+          enum:
+            - MANAGED
+            - EXTERNAL
+        data-source-format:
+          $ref: '#/components/schemas/DataSourceFormat'
+          description: Data source format (DELTA or ICEBERG)
+        comment:
+          type: string
+          description: Table comment
+        schema:
+          type: array
+          description: Table columns as ColumnInfo
+          items:
+            $ref: '#/components/schemas/DeltaColumn'
+        protocol:
+          $ref: '#/components/schemas/DeltaProtocol'
+          description: Delta protocol version and feature requirements
+        properties:
+          type: object
+          description: Delta table properties
+          additionalProperties:
+            type: string
+      required:
+        - name
+        - location
+        - table-type
+        - data-source-format
+        - schema
+        - protocol
+        - properties
+      example:
+        name: "sales"
+        location: "s3://bucket/warehouse/catalog/schema/sales"
+        table-type: "MANAGED"
+        data-source-format: "DELTA"
+        schema:
+          - type-json:
+              name: "id"
+              type: "long"
+              nullable: false
+              metadata: {}
+          - type-json:
+              name: "amount"
+              type:
+                type: "decimal"
+                precision: 10
+                scale: 2
+              nullable: true
+              metadata: {}
+        protocol:
+          min_reader_version: 3
+          min_writer_version: 7
+          reader_features:
+            - "deletionVectors"
+          writer_features:
+            - "deletionVectors"
+            - "invariants"
+        properties:
+          "delta.enableDeletionVectors": "true"
+
+    LoadTableResponse:
+      type: object
+      properties:
+        metadata:
+          $ref: '#/components/schemas/TableMetadata'
+          description: Complete table metadata including schema, protocol, and properties
+        commits:
+          type: array
+          description: All unbackfilled CCv2 commits
+          items:
+            $ref: '#/components/schemas/DeltaCommit'
+        latest-table-version:
+          type: integer
+          format: int64
+          description: Latest table version
+        config:
+          type: object
+          description: Additional configuration
+          additionalProperties:
+            type: string
+        storage-credentials:
+          type: array
+          description: Temporary credentials (only if with_credentials=true)
+          items:
+            $ref: '#/components/schemas/StorageCredential'
+      required:
+        - metadata
+
+    TableMetadata:
+      type: object
+      properties:
+        etag:
+          type: string
+          description: Entity tag for optimistic concurrency control
+        data-source-format:
+          $ref: '#/components/schemas/DataSourceFormat'
+          description: Data source format (DELTA or ICEBERG)
+        table-type:
+          type: string
+          description: Table type (MANAGED or EXTERNAL)
+          enum:
+            - MANAGED
+            - EXTERNAL
+        table-uuid:
+          type: string
+          format: uuid
+          description: Unique identifier for the table
+        location:
+          type: string
+          description: Storage location of the table
+        owner:
+          type: string
+          description: Owner of the table
+        comment:
+          type: string
+          description: Table comment
+        create-time:
+          type: integer
+          format: int64
+          description: Creation time in epoch milliseconds
+        created-by:
+          type: string
+          description: Creator username
+        update-time:
+          type: integer
+          format: int64
+          description: Last update time in epoch milliseconds
+        updated-by:
+          type: string
+          description: Last updater username
+        securable_type:
+          type: string
+          description: Type of securable (TABLE)
+        schema:
+          type: array
+          description: Table schema as ColumnInfo array
+          items:
+            $ref: '#/components/schemas/DeltaColumn'
+        protocol:
+          $ref: '#/components/schemas/DeltaProtocol'
+          description: Delta protocol version and feature requirements
+        properties:
+          type: object
+          description: Table properties
+          additionalProperties:
+            type: string
+      required:
+        - etag
+        - data-source-format
+        - table-type
+        - table-uuid
+        - location
+        - schema
+        - protocol
+        - properties
+
+    DeltaColumn:
+      type: object
+      description: |
+        Column information for Delta tables. Contains the type-json field with the full
+        type specification as a JSON-serialized Delta schema field (StructField).
+        All other fields (name, type-text, type-name, position, nullable, comment, partition-index)
+        can be derived on-demand from type-json.
+      properties:
+        type-json:
+          $ref: '#/components/schemas/StructField'
+          description: Complete field specification including name, type, nullability, and metadata
+      required:
+        - type-json
+
+    ColumnMask:
+      type: object
+      description: Column mask configuration for data masking
+      properties:
+        function_name:
+          type: string
+          description: Fully qualified name of the masking function
+        using_column_names:
+          type: array
+          description: Column names used by the mask function
+          items:
+            type: string
+
+    DeltaProtocol:
+      type: object
+      description: Delta table protocol specification
+      properties:
+        min_reader_version:
+          type: integer
+          format: int32
+          description: Minimum reader version
+        min_writer_version:
+          type: integer
+          format: int32
+          description: Minimum writer version
+        reader_features:
+          type: array
+          description: Enabled reader features
+          items:
+            type: string
+        writer_features:
+          type: array
+          description: Enabled writer features
+          items:
+            type: string
+      required:
+        - min_reader_version
+        - min_writer_version
+
+    DeltaCommit:
+      type: object
+      description: Delta commit information for CCv2
+      properties:
+        version:
+          type: integer
+          format: int64
+          description: Commit version
+        timestamp:
+          type: integer
+          format: int64
+          description: In-commit timestamp
+        file-name:
+          type: string
+          description: UUID-based commit file name
+        file-size:
+          type: integer
+          format: int64
+          description: Commit file size in bytes
+        file-modification-timestamp:
+          type: integer
+          format: int64
+          description: File modification timestamp
+      required:
+        - version
+        - timestamp
+        - file-name
+        - file-size
+        - file-modification-timestamp
+
+    UpdateTableRequest:
+      type: object
+      description: Request to update a table with requirements and updates
+      properties:
+        requirements:
+          type: array
+          description: Pre-conditions that must be met for the update
+          items:
+            $ref: '#/components/schemas/TableRequirement'
+        updates:
+          type: array
+          description: Updates to apply to the table
+          items:
+            $ref: '#/components/schemas/TableUpdate'
+      required:
+        - requirements
+        - updates
+
+    TableRequirement:
+      type: object
+      description: A requirement that must be met for the update to proceed
+      discriminator:
+        propertyName: type
+        mapping:
+          assert-table-uuid: '#/components/schemas/AssertTableUUID'
+          assert-etag: '#/components/schemas/AssertEtag'
+      unevaluatedProperties: false
+      properties:
+        type:
+          type: string
+          description: Requirement type
+      required:
+        - type
+      oneOf:
+        - $ref: '#/components/schemas/AssertTableUUID'
+        - $ref: '#/components/schemas/AssertEtag'
+
+    AssertTableUUID:
+      type: object
+      description: Assert that the table UUID matches the expected value
+      properties:
+        type:
+          type: string
+          const: "assert-table-uuid"
+        uuid:
+          type: string
+          format: uuid
+          description: Expected table UUID
+      required:
+        - type
+        - uuid
+
+    AssertEtag:
+      type: object
+      description: Assert that the table etag matches the expected value for optimistic concurrency
+      properties:
+        type:
+          type: string
+          const: "assert-etag"
+        etag:
+          type: string
+          description: Expected etag value
+      required:
+        - type
+        - etag
+
+    TableUpdate:
+      type: object
+      description: An update action to apply to the table
+      discriminator:
+        propertyName: action
+        mapping:
+          set-properties: '#/components/schemas/SetPropertiesUpdate'
+          remove-properties: '#/components/schemas/RemovePropertiesUpdate'
+          delta-set-schema-and-column-masks: '#/components/schemas/SetSchemaUpdate'
+          delta-set-table-comment: '#/components/schemas/SetTableCommentUpdate'
+          delta-update-protocol: '#/components/schemas/UpdateProtocolUpdate'
+          delta-add-commit: '#/components/schemas/AddCommitUpdate'
+          delta-set-latest-backfilled-version: '#/components/schemas/SetLatestBackfilledVersionUpdate'
+      unevaluatedProperties: false
+      properties:
+        action:
+          type: string
+          description: Update action type
+      required:
+        - action
+      oneOf:
+        - $ref: '#/components/schemas/SetPropertiesUpdate'
+        - $ref: '#/components/schemas/RemovePropertiesUpdate'
+        - $ref: '#/components/schemas/SetSchemaUpdate'
+        - $ref: '#/components/schemas/SetTableCommentUpdate'
+        - $ref: '#/components/schemas/UpdateProtocolUpdate'
+        - $ref: '#/components/schemas/AddCommitUpdate'
+        - $ref: '#/components/schemas/SetLatestBackfilledVersionUpdate'
+
+    SetPropertiesUpdate:
+      type: object
+      description: Set table properties
+      properties:
+        action:
+          type: string
+          const: "set-properties"
+        updates:
+          type: object
+          description: Properties to set
+          additionalProperties:
+            type: string
+      required:
+        - action
+        - updates
+
+    RemovePropertiesUpdate:
+      type: object
+      description: Remove table properties
+      properties:
+        action:
+          type: string
+          const: "remove-properties"
+        removals:
+          type: array
+          description: Property keys to remove
+          items:
+            type: string
+      required:
+        - action
+        - removals
+
+    SetSchemaUpdate:
+      type: object
+      description: Set table schema and column masks
+      properties:
+        action:
+          type: string
+          const: "delta-set-schema-and-column-masks"
+        schema:
+          type: array
+          description: New schema columns
+          items:
+            $ref: '#/components/schemas/DeltaColumn'
+        column-mask-update-mode:
+          type: string
+          description: How to update column masks
+          enum:
+            - RETAIN_MERGE
+            - OVERWRITE
+          default: RETAIN_MERGE
+      required:
+        - action
+        - schema
+
+    SetTableCommentUpdate:
+      type: object
+      description: Set table comment
+      properties:
+        action:
+          type: string
+          const: "delta-set-table-comment"
+        comment:
+          type: string
+          description: New table comment
+      required:
+        - action
+        - comment
+
+    UpdateProtocolUpdate:
+      type: object
+      description: Update table protocol version and features
+      properties:
+        action:
+          type: string
+          const: "delta-update-protocol"
+        protocol:
+          $ref: '#/components/schemas/DeltaProtocol'
+          description: New protocol version (optional, can use add/remove features instead)
+        add-reader-features:
+          type: array
+          description: Reader features to add
+          items:
+            type: string
+        add-writer-features:
+          type: array
+          description: Writer features to add
+          items:
+            type: string
+        remove-reader-features:
+          type: array
+          description: Reader features to remove
+          items:
+            type: string
+        remove-writer-features:
+          type: array
+          description: Writer features to remove
+          items:
+            type: string
+      required:
+        - action
+
+    AddCommitUpdate:
+      type: object
+      description: Add a CCv2 commit to the table
+      properties:
+        action:
+          type: string
+          const: "delta-add-commit"
+        commit:
+          $ref: '#/components/schemas/DeltaCommit'
+          description: Commit metadata including version, timestamp, and file information
+      required:
+        - action
+        - commit
+
+    SetLatestBackfilledVersionUpdate:
+      type: object
+      description: Set the latest backfilled version for the table
+      properties:
+        action:
+          type: string
+          const: "delta-set-latest-backfilled-version"
+        latest-published-version:
+          type: integer
+          format: int64
+          description: Latest backfilled/published version
+      required:
+        - action
+        - latest-published-version
+
+    ListTablesResponse:
+      type: object
+      properties:
+        identifiers:
+          type: array
+          description: List of table identifiers
+          items:
+            $ref: '#/components/schemas/TableIdentifierWithDataSourceFormat'
+        next-page-token:
+          type: string
+          description: Token for next page
+
+    TableIdentifier:
+      type: object
+      properties:
+        namespace:
+          type: array
+          description: Namespace path
+          items:
+            type: string
+        name:
+          type: string
+          description: Table name
+      required:
+        - namespace
+        - name
+
+    TableIdentifierWithDataSourceFormat:
+      type: object
+      description: Table identifier with data source format, used in list operations
+      allOf:
+        - $ref: '#/components/schemas/TableIdentifier'
+        - type: object
+          properties:
+            data-source-format:
+              $ref: '#/components/schemas/DataSourceFormat'
+              description: Data source format (DELTA or ICEBERG)
+          required:
+            - data-source-format
+
+    RenameTableRequest:
+      type: object
+      properties:
+        source:
+          $ref: '#/components/schemas/TableIdentifier'
+        destination:
+          $ref: '#/components/schemas/TableIdentifier'
+      required:
+        - source
+        - destination
+
+    CredentialsResponse:
+      type: object
+      properties:
+        storage-credentials:
+          type: array
+          items:
+            $ref: '#/components/schemas/StorageCredential'
+
+    StorageCredential:
+      type: object
+      description: |
+        Temporary storage credential with prefix and config.
+        Indicates a storage location prefix where the credential is relevant.
+        Clients should choose the most specific prefix (by selecting the longest prefix)
+        if several credentials of the same type are available.
+      required:
+        - prefix
+        - config
+      properties:
+        prefix:
+          type: string
+          description: Storage path prefix this credential applies to
+        config:
+          type: object
+          description: |
+            Credential configuration with cloud provider-specific fields.
+            Contains temporary credentials for accessing storage as string key-value pairs.
+
+            Common configuration keys:
+
+            **AWS S3 Credentials:**
+            - `s3.access-key-id`: AWS access key ID
+            - `s3.secret-access-key`: AWS secret access key
+            - `s3.session-token`: AWS session token for temporary credentials
+
+            **Azure Blob Storage Credentials:**
+            - `azure.sas-token`: Azure SAS (Shared Access Signature) token
+
+            **Google Cloud Storage Credentials:**
+            - `gcs.oauth-token`: GCP OAuth token
+
+            Additional provider-specific or implementation-specific keys may be included.
+          additionalProperties:
+            type: string
+        expiration-time-ms:
+          type: integer
+          format: int64
+          description: |
+            Credential expiration time in epoch milliseconds.
+            This standardized field avoids the need for provider-specific expiration keys
+            (e.g., s3.session-token-expires-at-ms, adls.sas-token-expires-at-ms, etc.)
+
+    DataSourceFormat:
+      type: string
+      description: Data source format
+      enum:
+        - DELTA
+        - ICEBERG
+        - PARQUET
+        - CSV
+        - JSON
+        - ORC
+        - TEXT
+        - AVRO
+
+    # Namespace schemas
+    ListNamespacesResponse:
+      type: object
+      properties:
+        namespaces:
+          type: array
+          description: List of namespace identifiers
+          items:
+            type: array
+            items:
+              type: string
+        next-page-token:
+          type: string
+          description: Token for next page
+
+    CreateNamespaceRequest:
+      type: object
+      properties:
+        namespace:
+          type: array
+          description: Namespace path
+          items:
+            type: string
+        properties:
+          type: object
+          description: Namespace properties
+          additionalProperties:
+            type: string
+      required:
+        - namespace
+
+    NamespaceResponse:
+      type: object
+      properties:
+        namespace:
+          type: array
+          description: Namespace path
+          items:
+            type: string
+        properties:
+          type: object
+          description: Namespace properties
+          additionalProperties:
+            type: string
+      required:
+        - namespace
+
+    UpdateNamespacePropertiesRequest:
+      type: object
+      properties:
+        updates:
+          type: object
+          description: Properties to add or update
+          additionalProperties:
+            type: string
+        removals:
+          type: array
+          description: Property keys to remove
+          items:
+            type: string
+
+    UpdateNamespacePropertiesResponse:
+      type: object
+      properties:
+        updated:
+          type: array
+          description: Keys that were updated
+          items:
+            type: string
+        removed:
+          type: array
+          description: Keys that were removed
+          items:
+            type: string
+        missing:
+          type: array
+          description: Keys that were requested for removal but not found
+          items:
+            type: string
+
+    # Metrics schemas
+    ReportMetricsRequest:
+      type: object
+      properties:
+        snapshot-id:
+          type: integer
+          format: int64
+          description: Snapshot/version identifier
+        scan-metrics:
+          $ref: '#/components/schemas/ScanMetrics'
+        commit-metrics:
+          $ref: '#/components/schemas/CommitMetrics'
+
+    ScanMetrics:
+      type: object
+      description: Metrics related to table scanning
+      properties:
+        total-planning-duration:
+          $ref: '#/components/schemas/MetricValue'
+        result-data-files:
+          $ref: '#/components/schemas/MetricValue'
+        scanned-data-manifests:
+          $ref: '#/components/schemas/MetricValue'
+      additionalProperties:
+        $ref: '#/components/schemas/MetricValue'
+
+    CommitMetrics:
+      type: object
+      description: Metrics related to commits
+      properties:
+        total-duration:
+          $ref: '#/components/schemas/MetricValue'
+        added-data-files:
+          $ref: '#/components/schemas/MetricValue'
+      additionalProperties:
+        $ref: '#/components/schemas/MetricValue'
+
+    MetricValue:
+      type: object
+      properties:
+        unit:
+          type: string
+          description: Unit of measurement (e.g., "millisecond", "count")
+        value:
+          type: number
+          description: Metric value
+      required:
+        - unit
+        - value
+
+    # ========== Spark DataType Schemas ==========
+    # These schemas define the JSON representation of Spark SQL data types
+    # as produced by StructField.toJson and DataType.json
+
+    DataType:
+      description: |
+        Spark SQL DataType representation. Can be either:
+        - A primitive type string (e.g., "string", "integer", "long", "double")
+        - A complex type object (decimal, array, map, struct)
+      oneOf:
+        - type: string
+          description: |
+            Primitive type name. Valid values include: string, integer, long, short, byte,
+            float, double, decimal, boolean, binary, date, timestamp, timestamp_ntz, null,
+            char, varchar, geometry, geography, time, and interval types.
+          example: "string"
+        - $ref: '#/components/schemas/DecimalType'
+        - $ref: '#/components/schemas/ArrayType'
+        - $ref: '#/components/schemas/MapType'
+        - $ref: '#/components/schemas/StructType'
+
+    DecimalType:
+      type: object
+      description: Decimal type with precision and scale
+      properties:
+        type:
+          type: string
+          enum: ["decimal"]
+          description: Type identifier for decimal
+        precision:
+          type: integer
+          description: Total number of digits
+          minimum: 1
+          maximum: 38
+        scale:
+          type: integer
+          description: Number of digits after decimal point
+          minimum: 0
+      required:
+        - type
+        - precision
+        - scale
+      example:
+        type: "decimal"
+        precision: 10
+        scale: 2
+
+    ArrayType:
+      type: object
+      description: Array type containing elements of a specific type
+      properties:
+        type:
+          type: string
+          enum: ["array"]
+          description: Type identifier for array
+        elementType:
+          $ref: '#/components/schemas/DataType'
+          description: Data type of array elements (can be primitive or complex)
+        containsNull:
+          type: boolean
+          description: Whether array elements can be null
+          default: true
+      required:
+        - type
+        - elementType
+        - containsNull
+      example:
+        type: "array"
+        elementType: "string"
+        containsNull: true
+
+    MapType:
+      type: object
+      description: Map type with key-value pairs
+      properties:
+        type:
+          type: string
+          enum: ["map"]
+          description: Type identifier for map
+        keyType:
+          $ref: '#/components/schemas/DataType'
+          description: Data type of map keys (can be primitive or complex)
+        valueType:
+          $ref: '#/components/schemas/DataType'
+          description: Data type of map values (can be primitive or complex)
+        valueContainsNull:
+          type: boolean
+          description: Whether map values can be null
+          default: true
+      required:
+        - type
+        - keyType
+        - valueType
+        - valueContainsNull
+      example:
+        type: "map"
+        keyType: "string"
+        valueType: "integer"
+        valueContainsNull: true
+
+    StructType:
+      type: object
+      description: Struct type containing named fields
+      properties:
+        type:
+          type: string
+          enum: ["struct"]
+          description: Type identifier for struct
+        fields:
+          type: array
+          description: Array of field definitions
+          items:
+            $ref: '#/components/schemas/StructField'
+      required:
+        - type
+        - fields
+      example:
+        type: "struct"
+        fields:
+          - name: "id"
+            type: "long"
+            nullable: false
+            metadata: {}
+          - name: "name"
+            type: "string"
+            nullable: true
+            metadata: {}
+
+    StructField:
+      type: object
+      description: |
+        A field within a StructType, representing a column with name, type, and metadata.
+        This is the same structure returned by Spark's StructField.toJson.
+      properties:
+        name:
+          type: string
+          description: Field name
+        type:
+          description: |
+            Column data type. Can be either:
+            - A primitive type string: "string", "integer", "long", "short", "byte", "float",
+              "double", "boolean", "binary", "date", "timestamp", "timestamp_ntz", "null", etc.
+            - A DecimalType object: {"type": "decimal", "precision": 10, "scale": 2}
+            - An ArrayType object: {"type": "array", "elementType": <DataType>, "containsNull": true}
+            - A MapType object: {"type": "map", "keyType": <DataType>, "valueType": <DataType>,
+              "valueContainsNull": true}
+            - A StructType object: {"type": "struct", "fields": [<StructField>, ...]}
+
+            Where <DataType> recursively follows the same pattern (primitive string or complex object).
+
+            See the DecimalType, ArrayType, MapType, and StructType schemas below for details on
+            complex type structures.
+          example: "long"
+        nullable:
+          type: boolean
+          description: Whether this field can be null
+          default: true
+        metadata:
+          type: object
+          description: Additional field metadata (arbitrary key-value pairs)
+          additionalProperties: true
+          default: {}
+        comment:
+          type: string
+          description: Optional field comment/description
+        mask:
+          $ref: '#/components/schemas/ColumnMask'
+          description: Optional column-level data masking configuration
+      required:
+        - name
+        - type
+        - nullable
+        - metadata
+      example:
+        name: "user_id"
+        type: "long"
+        nullable: false
+        metadata: {}
+
+    # Error Response Schema
+    ErrorResponse:
+      type: object
+      description: Standard error response for all error cases
+      properties:
+        error_code:
+          type: string
+          description: Error code identifying the error type
+        message:
+          type: string
+          description: Human-readable error message
+        details:
+          type: array
+          description: Additional error details
+          items:
+            type: object
+            properties:
+              "@type":
+                type: string
+              reason:
+                type: string
+              metadata:
+                type: object
+                additionalProperties: true
+        stack_trace:
+          type: string
+          description: Stack trace (only in debug mode, optional)
+      required:
+        - error_code
+        - message
+      example:
+        error_code: "NOT_FOUND"
+        message: "Table 'sales' not found in namespace 'accounting'"
+        details:
+          - "@type": "google.rpc.ErrorInfo"
+            reason: "TABLE_NOT_FOUND"
+            metadata: {}
+
+  # Reusable Response Definitions
+  responses:
+    BadRequestErrorResponse:
+      description: |
+        Bad Request - The request is malformed or contains invalid parameters.
+        This could be caused by invalid JSON, missing required fields, or validation failures.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error_code: "INVALID_ARGUMENT"
+            message: "Invalid request: missing required field 'name'"
+            details:
+              - "@type": "google.rpc.ErrorInfo"
+                reason: "INVALID_ARGUMENT"
+                metadata: {}
+
+    UnauthorizedResponse:
+      description: |
+        Unauthorized - Authentication is required or has failed.
+        The access token may be expired, revoked, malformed, or invalid.
+        Client should authenticate and retry the request.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error_code: "UNAUTHENTICATED"
+            message: "Authentication required"
+            details:
+              - "@type": "google.rpc.ErrorInfo"
+                reason: "UNAUTHENTICATED"
+                metadata: {}
+
+    ForbiddenResponse:
+      description: |
+        Forbidden - The authenticated user does not have permission to perform this operation.
+        The user may need additional privileges or access rights.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error_code: "PERMISSION_DENIED"
+            message: "User does not have permission to access this resource"
+            details:
+              - "@type": "google.rpc.ErrorInfo"
+                reason: "PERMISSION_DENIED"
+                metadata: {}
+
+    NotFoundResponse:
+      description: |
+        Not Found - The requested resource does not exist.
+        This could be a table, namespace, or other catalog object.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error_code: "NOT_FOUND"
+            message: "Resource not found"
+            details:
+              - "@type": "google.rpc.ErrorInfo"
+                reason: "NOT_FOUND"
+                metadata: {}
+
+    ConflictResponse:
+      description: |
+        Conflict - The resource already exists or there is a conflict with the current state.
+        For example, attempting to create a table that already exists.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error_code: "ALREADY_EXISTS"
+            message: "Table already exists"
+            details:
+              - "@type": "google.rpc.ErrorInfo"
+                reason: "ALREADY_EXISTS"
+                metadata: {}
+
+    PreconditionFailedResponse:
+      description: |
+        Precondition Failed - A requirement check failed (e.g., table UUID or etag mismatch).
+        The client should refresh the resource state and retry with updated requirements.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error_code: "FAILED_PRECONDITION"
+            message: "Table UUID does not match expected value"
+            details:
+              - "@type": "google.rpc.ErrorInfo"
+                reason: "FAILED_PRECONDITION"
+                metadata: {}
+
+    InternalServerErrorResponse:
+      description: |
+        Internal Server Error - An unexpected error occurred on the server.
+        This indicates a server-side problem that may not be addressable from the client.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error_code: "INTERNAL_ERROR"
+            message: "An internal server error occurred"
+            details:
+              - "@type": "google.rpc.ErrorInfo"
+                reason: "INTERNAL_ERROR"
+                metadata: {}
+
+    ServiceUnavailableResponse:
+      description: |
+        Service Unavailable - The service is temporarily unavailable.
+        The client should retry the request after a delay.
+        A Retry-After header may indicate when to retry.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error_code: "UNAVAILABLE"
+            message: "Service temporarily unavailable"
+            details:
+              - "@type": "google.rpc.ErrorInfo"
+                reason: "UNAVAILABLE"
+                metadata: {}
