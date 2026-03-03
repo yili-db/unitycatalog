@@ -2,7 +2,12 @@ package io.unitycatalog.server.persist;
 
 import io.unitycatalog.server.exception.BaseException;
 import io.unitycatalog.server.exception.ErrorCode;
-import io.unitycatalog.server.model.*;
+import io.unitycatalog.server.model.CatalogInfo;
+import io.unitycatalog.server.model.CreateCatalog;
+import io.unitycatalog.server.model.ListCatalogsResponse;
+import io.unitycatalog.server.model.ListSchemasResponse;
+import io.unitycatalog.server.model.SchemaInfo;
+import io.unitycatalog.server.model.UpdateCatalog;
 import io.unitycatalog.server.persist.dao.CatalogInfoDAO;
 import io.unitycatalog.server.persist.dao.PropertyDAO;
 import io.unitycatalog.server.persist.utils.PagedListingHelper;
@@ -18,7 +23,6 @@ import java.util.Optional;
 import java.util.UUID;
 import org.hibernate.Session;
 import org.hibernate.SessionFactory;
-import org.hibernate.query.Query;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -53,7 +57,7 @@ public class CatalogRepository {
     return TransactionManager.executeWithTransaction(
         sessionFactory,
         session -> {
-          if (getCatalogDAO(session, createCatalog.getName()) != null) {
+          if (RepositoryUtils.getCatalogDaoOpt(session, createCatalog.getName()).isPresent()) {
             throw new BaseException(
                 ErrorCode.ALREADY_EXISTS, "Catalog already exists: " + createCatalog.getName());
           }
@@ -103,10 +107,7 @@ public class CatalogRepository {
     return TransactionManager.executeWithTransaction(
         sessionFactory,
         session -> {
-          CatalogInfoDAO catalogInfoDAO = getCatalogDAO(session, name);
-          if (catalogInfoDAO == null) {
-            throw new BaseException(ErrorCode.NOT_FOUND, "Catalog not found: " + name);
-          }
+          CatalogInfoDAO catalogInfoDAO = getCatalogDaoOrThrow(session, name);
           CatalogInfo catalogInfo = catalogInfoDAO.toCatalogInfo();
           return RepositoryUtils.attachProperties(
               catalogInfo, catalogInfo.getId(), Constants.CATALOG, session);
@@ -115,19 +116,13 @@ public class CatalogRepository {
         /* readOnly = */ true);
   }
 
-  public CatalogInfoDAO getCatalogDAO(Session session, String name) {
-    Query<CatalogInfoDAO> query =
-        session.createQuery("FROM CatalogInfoDAO WHERE name = :value", CatalogInfoDAO.class);
-    query.setParameter("value", name);
-    query.setMaxResults(1);
-    return query.uniqueResult();
+  public CatalogInfoDAO getCatalogDaoOrThrow(Session session, String name) {
+    return RepositoryUtils.getCatalogDaoOpt(session, name)
+        .orElseThrow(() -> new BaseException(ErrorCode.NOT_FOUND, "Catalog not found: " + name));
   }
 
-  public UUID getCatalogId(Session session, String catalogName) {
-    CatalogInfoDAO catalogInfo = getCatalogDAO(session, catalogName);
-    if (catalogInfo == null) {
-      throw new BaseException(ErrorCode.NOT_FOUND, "Catalog not found: " + catalogName);
-    }
+  public UUID getCatalogIdOrThrow(Session session, String catalogName) {
+    CatalogInfoDAO catalogInfo = getCatalogDaoOrThrow(session, catalogName);
     return catalogInfo.getId();
   }
 
@@ -140,10 +135,7 @@ public class CatalogRepository {
     return TransactionManager.executeWithTransaction(
         sessionFactory,
         session -> {
-          CatalogInfoDAO catalogInfoDAO = getCatalogDAO(session, name);
-          if (catalogInfoDAO == null) {
-            throw new BaseException(ErrorCode.NOT_FOUND, "Catalog not found: " + name);
-          }
+          CatalogInfoDAO catalogInfoDAO = getCatalogDaoOrThrow(session, name);
           if (updateCatalog.getNewName() == null
               && updateCatalog.getComment() == null
               && (updateCatalog.getProperties() == null
@@ -153,7 +145,8 @@ public class CatalogRepository {
                 catalogInfo, catalogInfo.getId(), Constants.CATALOG, session);
           }
           if (updateCatalog.getNewName() != null
-              && getCatalogDAO(session, updateCatalog.getNewName()) != null) {
+              && RepositoryUtils.getCatalogDaoOpt(session, updateCatalog.getNewName())
+                  .isPresent()) {
             throw new BaseException(
                 ErrorCode.ALREADY_EXISTS, "Catalog already exists: " + updateCatalog.getNewName());
           }
@@ -186,10 +179,7 @@ public class CatalogRepository {
     TransactionManager.executeWithTransaction(
         sessionFactory,
         session -> {
-          CatalogInfoDAO catalogInfo = getCatalogDAO(session, name);
-          if (catalogInfo == null) {
-            throw new BaseException(ErrorCode.NOT_FOUND, "Catalog not found: " + name);
-          }
+          CatalogInfoDAO catalogInfo = getCatalogDaoOrThrow(session, name);
 
           // First, check if there are any schemas in the catalog (to determine if force is needed)
           ListSchemasResponse initialSchemaCheck =

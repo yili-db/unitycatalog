@@ -1,10 +1,19 @@
 package io.unitycatalog.server.persist.dao;
 
 import io.unitycatalog.server.model.StagingTableInfo;
-import jakarta.persistence.*;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.Index;
+import jakarta.persistence.Table;
+import jakarta.persistence.Temporal;
+import jakarta.persistence.TemporalType;
 import java.util.Date;
 import java.util.UUID;
-import lombok.*;
+import lombok.AllArgsConstructor;
+import lombok.EqualsAndHashCode;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import lombok.Setter;
 import lombok.experimental.SuperBuilder;
 
 // Hibernate annotations
@@ -12,7 +21,6 @@ import lombok.experimental.SuperBuilder;
 @Table(
     name = "uc_staging_tables",
     indexes = {
-      @Index(name = "idx_name", columnList = "name"),
       @Index(name = "idx_staging_location", columnList = "staging_location"),
     })
 // Lombok annotations

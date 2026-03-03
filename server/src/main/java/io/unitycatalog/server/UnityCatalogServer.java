@@ -2,11 +2,14 @@ package io.unitycatalog.server;
 
 import static io.unitycatalog.server.security.SecurityContext.Issuers.INTERNAL;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.json.JsonMapper;
+import com.fasterxml.jackson.databind.module.SimpleModule;
 import com.linecorp.armeria.common.HttpResponse;
 import com.linecorp.armeria.server.Server;
 import com.linecorp.armeria.server.ServerBuilder;
@@ -18,19 +21,41 @@ import io.unitycatalog.server.auth.JCasbinAuthorizer;
 import io.unitycatalog.server.auth.UnityCatalogAuthorizer;
 import io.unitycatalog.server.auth.decorator.UnityAccessDecorator;
 import io.unitycatalog.server.auth.decorator.UnityAccessUtil;
+import io.unitycatalog.server.decorator.RpcLoggingDecorator;
 import io.unitycatalog.server.exception.BaseException;
 import io.unitycatalog.server.exception.ErrorCode;
 import io.unitycatalog.server.exception.ExceptionHandlingDecorator;
 import io.unitycatalog.server.exception.GlobalExceptionHandler;
+import io.unitycatalog.server.model.deltarest.TableUpdate;
 import io.unitycatalog.server.persist.Repositories;
 import io.unitycatalog.server.persist.utils.HibernateConfigurator;
 import io.unitycatalog.server.security.SecurityConfiguration;
 import io.unitycatalog.server.security.SecurityContext;
-import io.unitycatalog.server.service.*;
+import io.unitycatalog.server.service.AuthDecorator;
+import io.unitycatalog.server.service.AuthService;
+import io.unitycatalog.server.service.CatalogService;
+import io.unitycatalog.server.service.CredentialService;
+import io.unitycatalog.server.service.DeltaCommitsService;
+import io.unitycatalog.server.service.ExternalLocationService;
+import io.unitycatalog.server.service.FunctionService;
+import io.unitycatalog.server.service.IcebergRestCatalogService;
+import io.unitycatalog.server.service.MetastoreService;
+import io.unitycatalog.server.service.ModelService;
+import io.unitycatalog.server.service.PermissionService;
+import io.unitycatalog.server.service.SchemaService;
+import io.unitycatalog.server.service.Scim2SelfService;
+import io.unitycatalog.server.service.Scim2UserService;
+import io.unitycatalog.server.service.StagingTableService;
+import io.unitycatalog.server.service.TableService;
+import io.unitycatalog.server.service.TemporaryModelVersionCredentialsService;
+import io.unitycatalog.server.service.TemporaryPathCredentialsService;
+import io.unitycatalog.server.service.TemporaryTableCredentialsService;
+import io.unitycatalog.server.service.TemporaryVolumeCredentialsService;
+import io.unitycatalog.server.service.VolumeService;
 import io.unitycatalog.server.service.credential.CloudCredentialVendor;
-import io.unitycatalog.server.service.credential.aws.AwsCredentialVendor;
-import io.unitycatalog.server.service.credential.azure.AzureCredentialVendor;
-import io.unitycatalog.server.service.credential.gcp.GcpCredentialVendor;
+import io.unitycatalog.server.service.credential.StorageCredentialVendor;
+import io.unitycatalog.server.service.deltarest.DeltaRestCatalogService;
+import io.unitycatalog.server.service.deltarest.TableUpdateDeserializer;
 import io.unitycatalog.server.service.iceberg.FileIOFactory;
 import io.unitycatalog.server.service.iceberg.MetadataService;
 import io.unitycatalog.server.service.iceberg.TableConfigService;
@@ -60,10 +85,6 @@ public class UnityCatalogServer {
     Configurator.initialize(null, "etc/conf/server.log4j2.properties");
   }
 
-  public UnityCatalogServer() {
-    this(UnityCatalogServer.builder());
-  }
-
   private UnityCatalogServer(UnityCatalogServer.Builder unityCatalogServerBuilder) {
     setDefaults(unityCatalogServerBuilder);
     Path configurationFolder = Path.of("etc", "conf");
@@ -81,18 +102,6 @@ public class UnityCatalogServer {
     }
     if (unityCatalogServerBuilder.serverProperties == null) {
       unityCatalogServerBuilder.serverProperties(new ServerProperties(SERVER_PROPERTIES_FILE));
-    }
-    if (unityCatalogServerBuilder.cloudCredentialVendor == null) {
-      AwsCredentialVendor awsCredentialVendor =
-          new AwsCredentialVendor(unityCatalogServerBuilder.serverProperties);
-      AzureCredentialVendor azureCredentialVendor =
-          new AzureCredentialVendor(unityCatalogServerBuilder.serverProperties);
-      GcpCredentialVendor gcpCredentialVendor =
-          new GcpCredentialVendor(unityCatalogServerBuilder.serverProperties);
-      CloudCredentialVendor cloudCredentialVendor =
-          new CloudCredentialVendor(
-              awsCredentialVendor, azureCredentialVendor, gcpCredentialVendor);
-      unityCatalogServerBuilder.credentialOperations(cloudCredentialVendor);
     }
   }
 
@@ -119,6 +128,8 @@ public class UnityCatalogServer {
     // Init security decorators
     addSecurityDecorators(
         armeriaServerBuilder, unityCatalogServerBuilder.serverProperties, authorizer, repositories);
+    // Init RPC logging decorator (applied to all requests/responses)
+    addRpcLoggingDecorator(armeriaServerBuilder);
 
     return armeriaServerBuilder.build();
   }
@@ -148,7 +159,12 @@ public class UnityCatalogServer {
       UnityCatalogAuthorizer authorizer,
       Repositories repositories) {
     LOGGER.info("Adding Unity Catalog API services...");
-    CloudCredentialVendor cloudCredentialVendor = unityCatalogServerBuilder.cloudCredentialVendor;
+    CloudCredentialVendor cloudCredentialVendor =
+        unityCatalogServerBuilder.cloudCredentialVendor != null
+            ? unityCatalogServerBuilder.cloudCredentialVendor
+            : new CloudCredentialVendor(unityCatalogServerBuilder.serverProperties);
+    StorageCredentialVendor storageCredentialVendor =
+        new StorageCredentialVendor(cloudCredentialVendor, repositories.getExternalLocationUtils());
 
     // Add support for Unity Catalog APIs
     AuthService authService =
@@ -166,17 +182,17 @@ public class UnityCatalogServer {
     CredentialService credentialService = new CredentialService(authorizer, repositories);
     ExternalLocationService externalLocationService =
         new ExternalLocationService(authorizer, repositories);
+    DeltaCommitsService deltaCommitsService = new DeltaCommitsService(authorizer, repositories);
     MetastoreService metastoreService = new MetastoreService(repositories);
     // TODO: combine these into a single service in a follow-up PR
     TemporaryTableCredentialsService temporaryTableCredentialsService =
-        new TemporaryTableCredentialsService(authorizer, cloudCredentialVendor, repositories);
+        new TemporaryTableCredentialsService(storageCredentialVendor, repositories);
     TemporaryVolumeCredentialsService temporaryVolumeCredentialsService =
-        new TemporaryVolumeCredentialsService(authorizer, cloudCredentialVendor, repositories);
+        new TemporaryVolumeCredentialsService(storageCredentialVendor, repositories);
     TemporaryModelVersionCredentialsService temporaryModelVersionCredentialsService =
-        new TemporaryModelVersionCredentialsService(
-            authorizer, cloudCredentialVendor, repositories);
+        new TemporaryModelVersionCredentialsService(storageCredentialVendor, repositories);
     TemporaryPathCredentialsService temporaryPathCredentialsService =
-        new TemporaryPathCredentialsService(cloudCredentialVendor);
+        new TemporaryPathCredentialsService(storageCredentialVendor);
 
     JacksonRequestConverterFunction requestConverterFunction =
         new JacksonRequestConverterFunction(
@@ -230,21 +246,25 @@ public class UnityCatalogServer {
             requestConverterFunction)
         .annotatedService(BASE_PATH + "credentials", credentialService, requestConverterFunction)
         .annotatedService(
+            BASE_PATH + "delta/preview/commits", deltaCommitsService, requestConverterFunction)
+        .annotatedService(
             BASE_PATH + "external-locations", externalLocationService, requestConverterFunction);
     addIcebergApiServices(
         armeriaServerBuilder,
         unityCatalogServerBuilder.serverProperties,
-        unityCatalogServerBuilder.cloudCredentialVendor,
+        storageCredentialVendor,
         catalogService,
         schemaService,
         tableService,
         repositories);
+    addDeltaRestApiServices(
+        armeriaServerBuilder, authorizer, storageCredentialVendor, repositories);
   }
 
   private void addIcebergApiServices(
       ServerBuilder armeriaServerBuilder,
       ServerProperties serverProperties,
-      CloudCredentialVendor cloudCredentialVendor,
+      StorageCredentialVendor storageCredentialVendor,
       CatalogService catalogService,
       SchemaService schemaService,
       TableService tableService,
@@ -258,9 +278,9 @@ public class UnityCatalogServer {
     JacksonResponseConverterFunction icebergResponseConverter =
         new JacksonResponseConverterFunction(icebergMapper);
     MetadataService metadataService =
-        new MetadataService(new FileIOFactory(cloudCredentialVendor, serverProperties));
+        new MetadataService(new FileIOFactory(storageCredentialVendor, serverProperties));
     TableConfigService tableConfigService =
-        new TableConfigService(cloudCredentialVendor, serverProperties);
+        new TableConfigService(storageCredentialVendor, serverProperties);
 
     armeriaServerBuilder.annotatedService(
         BASE_PATH + "iceberg",
@@ -273,6 +293,52 @@ public class UnityCatalogServer {
             repositories),
         icebergRequestConverter,
         icebergResponseConverter);
+  }
+
+  /**
+   * Mixin to disable the generated @JsonTypeInfo annotation on TableUpdate. This allows our custom
+   * deserializer to handle polymorphic deserialization instead.
+   */
+  @JsonTypeInfo(use = JsonTypeInfo.Id.NONE)
+  @JsonIgnoreProperties({"action"})
+  interface TableUpdateMixin {}
+
+  private void addDeltaRestApiServices(
+      ServerBuilder armeriaServerBuilder,
+      UnityCatalogAuthorizer authorizer,
+      StorageCredentialVendor storageCredentialVendor,
+      Repositories repositories) {
+    LOGGER.info("Adding Delta REST Catalog services...");
+
+    // Add support for Delta REST Catalog APIs
+    ObjectMapper deltaRestMapper =
+        JsonMapper.builder()
+            .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+            .serializationInclusion(JsonInclude.Include.NON_NULL)
+            .build();
+
+    // Disable the generated @JsonTypeInfo annotation on TableUpdate using a mixin
+    // This prevents Jackson from trying to use the annotation-based polymorphic deserialization
+    deltaRestMapper.addMixIn(TableUpdate.class, TableUpdateMixin.class);
+
+    // Register custom deserializer for TableUpdate to handle polymorphic deserialization
+    // This is needed because OpenAPI Generator (with library: "resteasy") generates separate
+    // classes for each update type without creating an inheritance relationship
+    SimpleModule module = new SimpleModule();
+    // Use raw type to bypass compile-time type checking since the generated classes don't
+    // share a common base class
+    module.addDeserializer((Class) TableUpdate.class, new TableUpdateDeserializer());
+    deltaRestMapper.registerModule(module);
+    JacksonRequestConverterFunction deltaRestRequestConverter =
+        new JacksonRequestConverterFunction(deltaRestMapper);
+    JacksonResponseConverterFunction deltaRestResponseConverter =
+        new JacksonResponseConverterFunction(deltaRestMapper);
+
+    armeriaServerBuilder.annotatedService(
+        BASE_PATH + "delta-rest",
+        new DeltaRestCatalogService(authorizer, repositories, storageCredentialVendor),
+        deltaRestRequestConverter,
+        deltaRestResponseConverter);
   }
 
   private void addSecurityDecorators(
@@ -305,6 +371,14 @@ public class UnityCatalogServer {
           new ExceptionHandlingDecorator(new GlobalExceptionHandler());
       armeriaServerBuilder.decorator(exceptionDecorator);
     }
+  }
+
+  private void addRpcLoggingDecorator(ServerBuilder armeriaServerBuilder) {
+    LOGGER.info("Enabling RPC request/response logging decorator...");
+    // Apply RPC logging decorator to all API requests
+    RpcLoggingDecorator loggingDecorator = new RpcLoggingDecorator();
+    armeriaServerBuilder.routeDecorator().pathPrefix(BASE_PATH).build(loggingDecorator);
+    armeriaServerBuilder.routeDecorator().pathPrefix(CONTROL_PATH).build(loggingDecorator);
   }
 
   public static void main(String[] args) {

@@ -11,9 +11,11 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.HashMap;
 import org.hibernate.Session;
+import org.hibernate.query.Query;
 
 public class RepositoryUtils {
 
@@ -62,21 +64,84 @@ public class RepositoryUtils {
     return catalogName + "." + schemaName + "." + assetName;
   }
 
-  public static SchemaInfoDAO getSchemaByIdOrThrow(Session session, UUID schemaId) {
-    SchemaInfoDAO schemaInfoDAO =
-        session.get(SchemaInfoDAO.class, schemaId);
-    if (schemaInfoDAO == null) {
-      throw new BaseException(ErrorCode.NOT_FOUND, "Schema id not found: " + schemaId);
-    }
-    return schemaInfoDAO;
+  public static Optional<CatalogInfoDAO> getCatalogDaoOpt(Session session, String name) {
+    Query<CatalogInfoDAO> query =
+        session.createQuery("FROM CatalogInfoDAO WHERE name = :value", CatalogInfoDAO.class);
+    query.setParameter("value", name);
+    query.setMaxResults(1);
+    return query.uniqueResultOptional();
   }
 
-  public static CatalogInfoDAO getCatalogByIdOrThrow(Session session, UUID catalogId) {
-    CatalogInfoDAO catalogInfoDAO =
-        session.get(CatalogInfoDAO.class, catalogId);
-    if (catalogInfoDAO == null) {
-      throw new BaseException(ErrorCode.NOT_FOUND, "Catalog id not found: " + catalogId);
+  public static Optional<SchemaInfoDAO> getSchemaDaoOpt(
+      Session session, UUID catalogId, String schemaName) {
+    Query<SchemaInfoDAO> query =
+        session.createQuery(
+            "FROM SchemaInfoDAO WHERE name = :name and catalogId = :catalogId",
+            SchemaInfoDAO.class);
+    query.setParameter("name", schemaName);
+    query.setParameter("catalogId", catalogId);
+    query.setMaxResults(1);
+    return query.uniqueResultOptional();
+  }
+
+  public record CatalogAndSchemaDaoOpt(
+      Optional<CatalogInfoDAO> catalogInfoDAO, Optional<SchemaInfoDAO> schemaInfoDAO) {}
+  public record CatalogAndSchemaDao(
+      CatalogInfoDAO catalogInfoDAO, SchemaInfoDAO schemaInfoDAO) {}
+
+  public static CatalogAndSchemaDaoOpt getCatalogAndSchemaDaoOpt(
+      Session session, String catalogName, String schemaName) {
+    Optional<CatalogInfoDAO> catalog = getCatalogDaoOpt(session, catalogName);
+    if (catalog.isEmpty()) {
+      return new CatalogAndSchemaDaoOpt(Optional.empty(), Optional.empty());
     }
-    return catalogInfoDAO;
+    Optional<SchemaInfoDAO> schema = getSchemaDaoOpt(session, catalog.get().getId(), schemaName);
+    return new CatalogAndSchemaDaoOpt(catalog, schema);
+  }
+
+  public static CatalogAndSchemaDao getCatalogAndSchemaDaoOrThrow(
+      Session session, String catalogName, String schemaName) {
+    CatalogAndSchemaDaoOpt catalogAndSchemaDaoOpt =
+        getCatalogAndSchemaDaoOpt(session, catalogName, schemaName);
+    return new CatalogAndSchemaDao(
+        catalogAndSchemaDaoOpt
+            .catalogInfoDAO()
+            .orElseThrow(
+                () -> new BaseException(ErrorCode.NOT_FOUND, "Catalog not found: " + catalogName)),
+        catalogAndSchemaDaoOpt
+            .schemaInfoDAO()
+            .orElseThrow(
+                () ->
+                    new BaseException(
+                        ErrorCode.NOT_FOUND,
+                        "Schema not found: " + catalogName + "." + schemaName)));
+  }
+
+  public record CatalogAndSchemaNames(String catalogName, String schemaName) {}
+
+  /**
+   * Retrieves the catalog and schema names for a given schema ID.
+   *
+   * <p>This method performs a lookup to find the schema by its UUID, then retrieves
+   * the associated catalog information. It returns both the catalog and schema names
+   * as a pair.
+   *
+   * @param session the Hibernate session used to query the database
+   * @param schemaId the unique identifier of the schema
+   * @return a CatalogAndSchemaNames record
+   * @throws BaseException with ErrorCode.NOT_FOUND if the schema or its parent catalog is not found
+   */
+  public static CatalogAndSchemaNames getCatalogAndSchemaNames(Session session, UUID schemaId) {
+    SchemaInfoDAO schemaInfoDAO = session.get(SchemaInfoDAO.class, schemaId);
+    if (schemaInfoDAO == null) {
+      throw new BaseException(
+              ErrorCode.NOT_FOUND, "Schema not found: " + schemaId);
+    }
+    CatalogInfoDAO catalogInfoDAO = session.get(CatalogInfoDAO.class, schemaInfoDAO.getCatalogId());
+    if (catalogInfoDAO == null) {
+      throw new BaseException(
+              ErrorCode.NOT_FOUND, "Catalog not found: " + schemaInfoDAO.getCatalogId());
+    }
+    return new CatalogAndSchemaNames(catalogInfoDAO.getName(), schemaInfoDAO.getName());
   }
 }

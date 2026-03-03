@@ -1,5 +1,29 @@
 package io.unitycatalog.server.service;
 
+import static io.unitycatalog.server.model.SecurableType.CATALOG;
+import static io.unitycatalog.server.model.SecurableType.FUNCTION;
+import static io.unitycatalog.server.model.SecurableType.METASTORE;
+import static io.unitycatalog.server.model.SecurableType.SCHEMA;
+
+import io.unitycatalog.server.auth.UnityCatalogAuthorizer;
+import io.unitycatalog.server.auth.annotation.AuthorizeExpression;
+import io.unitycatalog.server.auth.annotation.AuthorizeResourceKey;
+import io.unitycatalog.server.auth.annotation.AuthorizeResourceKeys;
+import io.unitycatalog.server.exception.GlobalExceptionHandler;
+import io.unitycatalog.server.model.CatalogInfo;
+import io.unitycatalog.server.model.CreateFunctionRequest;
+import io.unitycatalog.server.model.FunctionInfo;
+import io.unitycatalog.server.model.ListFunctionsResponse;
+import io.unitycatalog.server.model.SchemaInfo;
+import io.unitycatalog.server.persist.CatalogRepository;
+import io.unitycatalog.server.persist.FunctionRepository;
+import io.unitycatalog.server.persist.MetastoreRepository;
+import io.unitycatalog.server.persist.Repositories;
+import io.unitycatalog.server.persist.SchemaRepository;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
 import com.linecorp.armeria.common.HttpResponse;
 import com.linecorp.armeria.common.HttpStatus;
 import com.linecorp.armeria.server.annotation.Delete;
@@ -7,28 +31,7 @@ import com.linecorp.armeria.server.annotation.ExceptionHandler;
 import com.linecorp.armeria.server.annotation.Get;
 import com.linecorp.armeria.server.annotation.Param;
 import com.linecorp.armeria.server.annotation.Post;
-import io.unitycatalog.server.auth.UnityCatalogAuthorizer;
-import io.unitycatalog.server.auth.annotation.AuthorizeExpression;
-import io.unitycatalog.server.auth.annotation.AuthorizeKey;
-import io.unitycatalog.server.auth.annotation.AuthorizeKeys;
-import io.unitycatalog.server.exception.GlobalExceptionHandler;
-import io.unitycatalog.server.model.CatalogInfo;
-import io.unitycatalog.server.model.CreateFunctionRequest;
-import io.unitycatalog.server.model.FunctionInfo;
-import io.unitycatalog.server.model.ListFunctionsResponse;
-import io.unitycatalog.server.model.SchemaInfo;
-import io.unitycatalog.server.persist.*;
 import lombok.SneakyThrows;
-
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.UUID;
-
-import static io.unitycatalog.server.model.SecurableType.CATALOG;
-import static io.unitycatalog.server.model.SecurableType.FUNCTION;
-import static io.unitycatalog.server.model.SecurableType.METASTORE;
-import static io.unitycatalog.server.model.SecurableType.SCHEMA;
 
 @ExceptionHandler(GlobalExceptionHandler.class)
 public class FunctionService extends AuthorizedService {
@@ -40,7 +43,7 @@ public class FunctionService extends AuthorizedService {
 
   @SneakyThrows
   public FunctionService(UnityCatalogAuthorizer authorizer, Repositories repositories) {
-    super(authorizer, repositories.getUserRepository());
+    super(authorizer, repositories);
     this.catalogRepository = repositories.getCatalogRepository();
     this.schemaRepository = repositories.getSchemaRepository();
     this.functionRepository = repositories.getFunctionRepository();
@@ -53,11 +56,11 @@ public class FunctionService extends AuthorizedService {
       #authorizeAny(#principal, #catalog, OWNER, USE_CATALOG) &&
           #authorizeAny(#principal, #schema, OWNER, USE_SCHEMA)
       """)
-  @AuthorizeKey(METASTORE)
+  @AuthorizeResourceKey(METASTORE)
   public HttpResponse createFunction(
-      @AuthorizeKeys({
-        @AuthorizeKey(value = CATALOG, key = "function_info.catalog_name"),
-        @AuthorizeKey(value = SCHEMA, key = "function_info.schema_name")
+      @AuthorizeResourceKeys({
+        @AuthorizeResourceKey(value = CATALOG, key = "function_info.catalog_name"),
+        @AuthorizeResourceKey(value = SCHEMA, key = "function_info.schema_name")
       })
       CreateFunctionRequest createFunctionRequest) {
     FunctionInfo functionInfo = functionRepository.createFunction(createFunctionRequest);
@@ -93,7 +96,7 @@ public class FunctionService extends AuthorizedService {
   }
 
   @Get("/{name}")
-  @AuthorizeKey(METASTORE)
+  @AuthorizeResourceKey(METASTORE)
   @AuthorizeExpression("""
       #authorize(#principal, #metastore, OWNER) ||
       #authorize(#principal, #catalog, OWNER) ||
@@ -103,12 +106,12 @@ public class FunctionService extends AuthorizedService {
           #authorize(#principal, #schema, USE_SCHEMA) &&
           #authorizeAny(#principal, #function, OWNER, EXECUTE))
       """)
-  public HttpResponse getFunction(@Param("name") @AuthorizeKey(FUNCTION) String name) {
+  public HttpResponse getFunction(@Param("name") @AuthorizeResourceKey(FUNCTION) String name) {
     return HttpResponse.ofJson(functionRepository.getFunction(name));
   }
 
   @Delete("/{name}")
-  @AuthorizeKey(METASTORE)
+  @AuthorizeResourceKey(METASTORE)
   @AuthorizeExpression("""
       #authorize(#principal, #metastore, OWNER) ||
       (#authorize(#principal, #function, OWNER) &&
@@ -116,7 +119,7 @@ public class FunctionService extends AuthorizedService {
           #authorizeAny(#principal, #catalog, OWNER, USE_CATALOG))
       """)
   public HttpResponse deleteFunction(
-      @Param("name") @AuthorizeKey(FUNCTION) String name,
+      @Param("name") @AuthorizeResourceKey(FUNCTION) String name,
       @Param("force") Optional<Boolean> force) {
     FunctionInfo functionInfo = functionRepository.getFunction(name);
     functionRepository.deleteFunction(name, force.orElse(false));
