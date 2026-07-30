@@ -15,6 +15,7 @@ import io.unitycatalog.server.exception.ErrorCode;
 import io.unitycatalog.server.model.ColumnInfo;
 import io.unitycatalog.server.model.CreateTable;
 import io.unitycatalog.server.model.DataSourceFormat;
+import io.unitycatalog.server.model.Dependency;
 import io.unitycatalog.server.model.DependencyList;
 import io.unitycatalog.server.model.ListTablesResponse;
 import io.unitycatalog.server.model.TableInfo;
@@ -41,6 +42,7 @@ import io.unitycatalog.server.utils.NormalizedURL;
 import io.unitycatalog.server.utils.ServerProperties;
 import io.unitycatalog.server.utils.ValidationUtils;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.Date;
 import java.util.List;
@@ -745,8 +747,14 @@ public class TableRepository {
           session.persist(tableInfoDAO);
           if (RepositoryUtils.isViewLike(tableType.getValue())) {
             DependencyDAO.DependentType dependentType = DependencyDAO.DependentType.TABLE;
+            // view_dependencies is optional (see validateViewLike); treat an absent list as empty.
+            DependencyList viewDeps = createTable.getViewDependencies();
+            List<Dependency> deps =
+                (viewDeps == null || viewDeps.getDependencies() == null)
+                    ? Collections.emptyList()
+                    : viewDeps.getDependencies();
             List<DependencyDAO> depDAOs =
-                createTable.getViewDependencies().getDependencies().stream()
+                deps.stream()
                     .map(dep -> DependencyDAO.from(dep, tableUUID, dependentType))
                     .collect(Collectors.toList());
             repositories
@@ -768,7 +776,11 @@ public class TableRepository {
 
   private void validateMetricView(Session session, CreateTable createTable) {
     validateViewLike(session, createTable, "metric view");
-    if (createTable.getViewDependencies().getDependencies().isEmpty()) {
+    // A metric view's dependencies are always client-supplied; require at least one.
+    DependencyList viewDeps = createTable.getViewDependencies();
+    if (viewDeps == null
+        || viewDeps.getDependencies() == null
+        || viewDeps.getDependencies().isEmpty()) {
       throw new BaseException(
           ErrorCode.INVALID_ARGUMENT,
           "view_dependencies must contain at least one entry for metric view");
@@ -784,10 +796,12 @@ public class TableRepository {
       throw new BaseException(
           ErrorCode.INVALID_ARGUMENT, "view_definition is required for " + entityLabel);
     }
+    // view_dependencies is optional: a client that does not compute base-table lineage (e.g. Spark
+    // for a plain view, which only populates dependencies for metric views) may omit it. When
+    // present, every listed dependency must resolve to an existing table/function.
     DependencyList viewDeps = createTable.getViewDependencies();
     if (viewDeps == null || viewDeps.getDependencies() == null) {
-      throw new BaseException(
-          ErrorCode.INVALID_ARGUMENT, "view_dependencies is required for " + entityLabel);
+      return;
     }
     List<DependencyDAO> depDAOs =
         viewDeps.getDependencies().stream()

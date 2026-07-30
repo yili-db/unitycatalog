@@ -693,27 +693,25 @@ public class UCViewProxySuite {
   }
 
   @Test
-  public void testCreatePlainViewSendsViewPayloadWithNonNullDependencies() throws Exception {
-    // A plain CREATE VIEW carries no dependencies; the connector must still send a non-null
-    // (empty) dependency list so the server's view validation accepts it.
+  public void testCreatePlainViewOmitsDependencies() throws Exception {
+    // Spark leaves `viewDependencies()` null for a plain view (it only fills it for metric views).
+    // The connector must send NO dependency list rather than an empty one: the server then derives
+    // the view's base-table lineage from its text. Sending an empty list would persist "no
+    // dependencies", which is wrong for a view that reads tables (and, on a lineage-validating
+    // server, makes the view unreadable).
     View view = plainViewBuilder().build();
 
-    TableInfo ucView =
-        stubPlainView().viewDependencies(new DependencyList().dependencies(List.of()));
+    TableInfo ucView = stubPlainView();
     when(mockTablesApi.createTable(any(CreateTable.class))).thenReturn(ucView);
 
-    View loaded = proxyViews.createView(Identifier.of(NAMESPACE, "v1"), view);
+    proxyViews.createView(Identifier.of(NAMESPACE, "v1"), view);
 
     ArgumentCaptor<CreateTable> captor = ArgumentCaptor.forClass(CreateTable.class);
     verify(mockTablesApi).createTable(captor.capture());
     CreateTable request = captor.getValue();
     assertThat(request.getTableType()).isEqualTo(TableType.VIEW);
     assertThat(request.getViewDefinition()).isEqualTo(PLAIN_VIEW_QUERY);
-    assertThat(request.getViewDependencies()).isNotNull();
-    assertThat(request.getViewDependencies().getDependencies()).isEmpty();
-    assertThat(loaded.queryText()).isEqualTo(PLAIN_VIEW_QUERY);
-    assertThat(loaded.properties().get(TableCatalog.PROP_TABLE_TYPE))
-        .isEqualTo(TableSummary.VIEW_TABLE_TYPE);
+    assertThat(request.getViewDependencies()).isNull();
   }
 
   @Test
