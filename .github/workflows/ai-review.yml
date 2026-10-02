@@ -1172,23 +1172,27 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Artifact-only pilot: the check-run is a neutral status pointer.
-          # It must NOT carry the review findings (those live only in the
-          # downloadable artifact), so nothing is auto-posted to the PR.
-          if [ "$REVIEW_READY" = "true" ]; then
+          # The check-run NAME, status, and title stay neutral (those can
+          # surface in the PR's checks list). The review renders in
+          # output.summary, which shows only on the check result page, not on
+          # the PR itself. The downloadable artifact remains for archival.
+          review_file=/tmp/review_output.txt
+          if [ "$REVIEW_READY" = "true" ] && [ -s "$review_file" ]; then
+            ready=true
             title="AI review completed"
-            summary="An AI review was generated and uploaded as a workflow artifact. Open the workflow run linked below and download the ai-review artifact to read the findings. This pilot does not post findings to the PR; the artifact is a draft for human review."
           else
+            ready=false
             title="AI review unavailable"
-            summary="The workflow did not produce validated review output. See the workflow run for diagnostics."
+            review_file=/dev/null
           fi
 
           jq -n \
-            --arg summary "$summary" \
             --arg name "AI Review Summary" \
             --arg head_sha "$HEAD_SHA" \
             --arg details_url "$RUN_URL" \
             --arg title "$title" \
+            --argjson ready "$ready" \
+            --rawfile review "$review_file" \
             '{
               name: $name,
               head_sha: $head_sha,
@@ -1197,11 +1201,13 @@ jobs:
               details_url: $details_url,
               output: {
                 title: $title,
-                summary: ($summary + "\n\n---\n[Workflow run](" + $details_url + ")")
+                summary: (if $ready
+                  then "AI review (draft; human review required)\n\n" + $review
+                  else "The workflow did not produce validated review output. See the workflow run for diagnostics." end)
               }
             }' > /tmp/check-run.json
 
           gh api --method POST "repos/${REPO}/check-runs" \
             --input /tmp/check-run.json --silent
-          printf 'Published neutral check for PR #%s at %s.\n' \
+          printf 'Published check for PR #%s at %s.\n' \
             "$PR_NUMBER" "$HEAD_SHA"
